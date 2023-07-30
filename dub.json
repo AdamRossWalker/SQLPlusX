@@ -1,0 +1,27 @@
+{
+	"name": "sqlplusx",
+    "targetName": "SQLPlusX",
+    "targetType": "executable",
+    "targetPath": "bin",
+    "authors": ["Adam Walker"],
+    "buildRequirements": ["allowWarnings"],
+    "description": "SQLPlusX",
+    "copyright": "Copyright © 2023, Adam Walker",
+    "license": "proprietary", 
+    "dependencies": {
+        "derelict-sdl2": "~>3.0.0-beta", 
+    }, 
+    "libs": [
+        "user32",
+        "version",
+        "./oci/lib/MSVC/oci", 
+        "./oci/lib/MSVC/ociw32", 
+    ], 
+    "sourceFiles": [
+        "./resources/resources.res", 
+    ], 
+    "stringImportPaths": [
+        "./Images/Import",
+        "./Fonts"
+    ]
+}
