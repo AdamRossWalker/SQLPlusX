@@ -1,0 +1,24 @@
+MainIcon        ICON DISCARDABLE "SQLPlusX.ico"
+
+1 VERSIONINFO
+    FILEVERSION    1,0,0,0
+    PRODUCTVERSION 1,0,0,0
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "080904b0"
+        {
+            VALUE "CompanyName",        "Adam Walker\0"
+            VALUE "FileDescription",    "SQLPlusX\0"
+            VALUE "FileVersion",        "1.0.0.0\0"
+            VALUE "LegalCopyright",     "Copyright © 2023, Adam Walker\0"
+            VALUE "OriginalFilename",   "SQLPlusX.exe\0"
+            VALUE "ProductName",        "SQLPlusX\0"
+            VALUE "ProductVersion",     "1.0.0.0\0"
+        }
+    }
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x0809, 1200
+    }
+}
