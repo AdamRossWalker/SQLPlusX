@@ -10,11 +10,11 @@ MainIcon        ICON DISCARDABLE "SQLPlusX.ico"
         {
             VALUE "CompanyName",        "Adam Walker\0"
             VALUE "FileDescription",    "SQLPlusX\0"
-            VALUE "FileVersion",        "1.0.0.0\0"
+            VALUE "FileVersion",        "1.0.1.0\0"
             VALUE "LegalCopyright",     "Copyright © 2023, Adam Walker\0"
             VALUE "OriginalFilename",   "SQLPlusX.exe\0"
             VALUE "ProductName",        "SQLPlusX\0"
-            VALUE "ProductVersion",     "1.0.0.0\0"
+            VALUE "ProductVersion",     "1.0.1.0\0"
         }
     }
     BLOCK "VarFileInfo"
