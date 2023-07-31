@@ -3,6 +3,8 @@ module range_extensions;
 import std.range.primitives : isInputRange, ElementType;
 import std.algorithm : max, min;
 
+import common;
+
 auto joiner(RoR)(RoR r) @trusted
 if (isInputRange!RoR && isInputRange!(ElementType!RoR))
 {
@@ -69,4 +71,38 @@ if (is(typeof(Predicate(items[0])) == bool))
             return true;
     
     return false;
+}
+
+int asciiCountUntil(alias predicate)(StringReference text)
+{
+    auto index = 0;
+    while (index < text.length && !predicate(text[index]))
+        index++;
+        
+    return index;
+}
+
+int asciiCountReverseUntil(alias predicate)(StringReference text)
+{
+    auto last = cast(int)text.length - 1;
+    auto index = last;
+    while (index >= 0 && !predicate(text[index]))
+        index--;
+        
+    return last - index;
+}
+
+unittest
+{
+    import std.ascii : isDigit;
+    assert(asciiCountUntil!(x => x.isDigit)("AAA123A") == 3);
+    assert(asciiCountUntil!(x => x.isDigit)("123A") == 0);
+    assert(asciiCountUntil!(x => x.isDigit)("") == 0);
+    assert(asciiCountUntil!(x => x.isDigit)("ABCDE") == 5);
+    
+    assert(asciiCountReverseUntil!(x => x.isDigit)("A321AAA") == 3);
+    assert(asciiCountReverseUntil!(x => x.isDigit)("A321") == 0);
+    assert(asciiCountReverseUntil!(x => x.isDigit)("123A") == 1);
+    assert(asciiCountReverseUntil!(x => x.isDigit)("") == 0);
+    assert(asciiCountReverseUntil!(x => x.isDigit)("EDCBA") == 5);
 }

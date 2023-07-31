@@ -5,7 +5,7 @@ import core.sys.windows.windows : HINSTANCE, LPSTR;
 import program;
 import common;
 
-extern(C) __gshared string[] rt_options = [ "gcopt=gc:precise"];
+extern(C) __gshared string[] rt_options = ["gcopt=gc:precise"];
 
 extern (Windows)
 int WinMain(

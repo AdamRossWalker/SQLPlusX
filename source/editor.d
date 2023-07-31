@@ -1,6 +1,6 @@
 module editor;
 
-import std.algorithm : min, max, countUntil, all, filter, map, splitter;
+import std.algorithm : min, max, all, filter, map, splitter;
 import std.array : array, join, replace;
 import std.ascii : isAlphaNum, isWhite;
 import std.conv :to, ConvException;
@@ -989,7 +989,7 @@ public final class EditorBufferItem : BufferItem
         {
             foreach (line; selectionStartLine .. selectionEndLine + 1)
             {
-                immutable start = min(4, max(0, lines[line].countUntil!"a != ' '"));
+                immutable start = min(4, max(0, lines[line].asciiCountUntil!(a => a != ' ')));
                 lines[line] = lines[line][start .. $];
             }
             
@@ -1034,7 +1034,7 @@ public final class EditorBufferItem : BufferItem
         }
     }
     
-    private static bool IsIdentifierCharacter(const dchar c) pure @nogc nothrow
+    private static bool IsIdentifierCharacter(const char c) pure @nogc nothrow
     {
         return c.IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.SingleWordOnly, ValidateQuote.SimpleIdentifierOnly);
     }
@@ -1050,7 +1050,7 @@ public final class EditorBufferItem : BufferItem
         
         if (text[index] == ' ')
         {
-            const startOfSpaceOffset = text[0 .. index].retro.countUntil!(c => c != ' ');
+            const startOfSpaceOffset = text[0 .. index].asciiCountReverseUntil!(c => c != ' ');
             if (startOfSpaceOffset < 0)
                 return 0;
             
@@ -1058,8 +1058,8 @@ public final class EditorBufferItem : BufferItem
         }
         
         const offset = IsIdentifierCharacter(text[index]) ? 
-            text[0 .. index].retro.countUntil!(c => !IsIdentifierCharacter(c)) : 
-            text[0 .. index].retro.countUntil!(c => IsIdentifierCharacter(c) || c == ' ');
+            text[0 .. index].asciiCountReverseUntil!(c => !IsIdentifierCharacter(c)) : 
+            text[0 .. index].asciiCountReverseUntil!(c => IsIdentifierCharacter(c) || c == ' ');
         
         if (offset < 0)
             return 0;
@@ -1080,8 +1080,8 @@ public final class EditorBufferItem : BufferItem
         if (text[index] != ' ')
         {
             const offset = IsIdentifierCharacter(text[index]) ? 
-                text[index .. $].countUntil!(c => !IsIdentifierCharacter(c)) : 
-                text[index .. $].countUntil!(c => IsIdentifierCharacter(c) || c == ' ');
+                text[index .. $].asciiCountUntil!(c => !IsIdentifierCharacter(c)) : 
+                text[index .. $].asciiCountUntil!(c => IsIdentifierCharacter(c) || c == ' ');
                 
             if (offset < 0)
                 return text.intLength;
@@ -1089,7 +1089,7 @@ public final class EditorBufferItem : BufferItem
             index += offset;
         }
         
-        const endOfSpaceOffset = text[index .. $].countUntil!(c => c != ' ');
+        const endOfSpaceOffset = text[index .. $].asciiCountUntil!(c => c != ' ');
         if (endOfSpaceOffset < 0)
             return text.intLength;
         
@@ -1108,13 +1108,11 @@ public final class EditorBufferItem : BufferItem
         if (currentCharacter.isAlphaNum || currentCharacter == '_')
             startOfWordOffset = cast(int)(
                 lines[cursorPositionLine][0 .. cursorPositionColumn]
-                .retro
-                .countUntil!(c => !IsIdentifierCharacter(c)));
+                .asciiCountReverseUntil!(c => !IsIdentifierCharacter(c)));
         else
             startOfWordOffset = cast(int)(
                 lines[cursorPositionLine][0 .. cursorPositionColumn]
-                .retro
-                .countUntil!(c => IsIdentifierCharacter(c)));
+                .asciiCountReverseUntil!(c => IsIdentifierCharacter(c)));
             
         if (startOfWordOffset < 0)
             return 0;
@@ -1134,11 +1132,11 @@ public final class EditorBufferItem : BufferItem
         int endOfWordOffset;
         
         if (IsIdentifierCharacter(character))
-            endOfWordOffset = cast(int)text.countUntil!(c => !IsIdentifierCharacter(c));
+            endOfWordOffset = cast(int)text.asciiCountUntil!(c => !IsIdentifierCharacter(c));
         else if (character == ' ')
-            endOfWordOffset = cast(int)text.countUntil!(c => c != ' ');
+            endOfWordOffset = cast(int)text.asciiCountUntil!(c => c != ' ');
         else 
-            endOfWordOffset = cast(int)text.countUntil!(c => IsIdentifierCharacter(c));
+            endOfWordOffset = cast(int)text.asciiCountUntil!(c => IsIdentifierCharacter(c));
         
         if (endOfWordOffset < 0)
             return lines[cursorPositionLine].intLength;
@@ -1205,7 +1203,7 @@ public final class EditorBufferItem : BufferItem
     
     public void MoveCursorToLineStart() @nogc
     {
-        immutable textStart = cast(int)lines[cursorPositionLine].countUntil!"a != ' '";
+        immutable textStart = cast(int)lines[cursorPositionLine].asciiCountUntil!(c => c != ' ');
         
         if (cursorPositionColumn == textStart)
             MoveCursorColumnTo(0);
@@ -1675,7 +1673,7 @@ public final class EditorBufferItem : BufferItem
         
         immutable newLineIndentation = 
             ' '.repeat(
-            (lines[cursorPositionLine][0 .. cursorPositionColumn].countUntil!"a != ' '" / 4) * 4)
+            (lines[cursorPositionLine][0 .. cursorPositionColumn].asciiCountUntil!(c => c != ' ') / 4) * 4)            
             .to!string;
         
         lines = lines[0 .. cursorPositionLine] ~                              // Any previous lines

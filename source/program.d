@@ -189,6 +189,15 @@ public abstract final class Program
                 DatabaseManager.GlobalFinalisation;
             }
             
+            version (Windows)
+            {
+                char[KL_NAMELENGTH] keyboardLayoutCodeZ;
+                GetKeyboardLayoutNameA(keyboardLayoutCodeZ.ptr);
+                auto keyboardLayoutCode = keyboardLayoutCodeZ.ptr.FromCString;
+            }
+            else
+                auto keyboardLayoutCode = "00020409"; // "United States-International"
+            
             Screen.Update(0, 0);
             Buffer.AddText("\n\n\n\n\n\n");
             Buffer.ScrollScreenToBottom;
@@ -481,6 +490,7 @@ public abstract final class Program
                                     isLeftControlKeyDown || isRightControlKeyDown, 
                                     isLeftShiftKeyDown   || isRightShiftKeyDown, 
                                     isLeftAltKeyDown     || isRightAltKeyDown, 
+                                    keyboardLayoutCode,
                                     character))
                                 {
                                     case Action.Nothing:
