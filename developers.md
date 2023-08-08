@@ -19,7 +19,7 @@ this is crazy, check out Casey Muratori on _Clean Code, Horrible Performance_.
 The result?  Yeah, some of the code and structure is not great.  But all programs 
 have those problems.  On the plus side; it's fast.  It opens fast, collects data 
 fast, performs statement completion fast, everything.  This is a large win in an 
-era where some modern programs can't even keep with typing and every click can be 
+era where some modern programs can't even keep up with typing and every click can be 
 measured in whole seconds.  There's lots of room for refactorings though.
 
 ### 2. My first large program in DLang
@@ -36,12 +36,12 @@ and so fixing it has never become a priority.
 ### 3. Game programming graphics
 
 The UI is drawn frame by frame using game techniques.
-Retained mode desktop UI framworks need to waste time with INotifyPropertyChanged
-and similar kludges.  Immeditate just draws the value at that instant.
+Retained mode desktop UI frameworks need to waste time with INotifyPropertyChanged
+and similar kludges.  Immeditate mode just draws the value at that instant.  It's 
+also naturally asynchronous.
 
 The result?  It's a clear performance win with the cost of more manual effort.  An immediate 
 mode library would be good if this did more than a command line UI.
-
 
 ## Build
 

@@ -1,6 +1,8 @@
 {
 	"fileVersion": 1,
 	"versions": {
+		"bindbc-loader": "1.0.3",
+		"bindbc-sdl": "1.1.3",
 		"derelict-sdl2": "3.0.0-beta.8",
 		"derelict-util": "3.0.0-beta.2"
 	}

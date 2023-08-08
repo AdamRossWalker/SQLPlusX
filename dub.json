@@ -8,10 +8,20 @@
     "description": "SQLPlusX",
     "copyright": "Copyright © 2023, Adam Walker",
     "license": "proprietary", 
+    "dflags-dmd": ["-mixin=mixin_output.d"], 
     "dependencies": {
-        "derelict-sdl2": "~>3.0.0-beta", 
+        "bindbc-sdl": "~>1.1.1", 
     }, 
+    "versions": [
+        "BindSDL_Static", 
+        "SDL_2020", 
+        "SDL_Image_205", 
+        "SDL_TTF_2018"
+    ],      
     "libs": [
+        "lib/SDL2",
+        "lib/SDL2main",
+        "lib/SDL2_ttf",
         "user32",
         "version",
         "./oci/lib/MSVC/oci", 
