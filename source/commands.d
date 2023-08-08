@@ -1,7 +1,7 @@
 module commands;
 
 import std.array : appender, array, replicate, replace;
-import std.algorithm : startsWith, substitute, max;
+import std.algorithm : filter, max, splitter, startsWith, substitute;
 import std.conv : to, ConvException;
 import std.datetime.stopwatch : StopWatch;
 import std.range : padLeft, retro, repeat;
@@ -15,6 +15,7 @@ import core.sys.windows.windows;
 import std.windows.syserror;
 
 import program;
+import utf8_slice;
 
 // Attribute used to map from SQLPlus commands or variable names to 
 // properties using the abbreviated forms as necessary.
@@ -28,7 +29,7 @@ public struct CommandName
         if (ShortName.length >= LongName.length)
             return ShortName;
         
-        auto nameStart = ShortName.stripRight([' ', '-']);
+        auto nameStart = ShortName.stripRight(" -");
         
         return nameStart ~ "[" ~ LongName[nameStart.length .. $] ~ "]";
     }
@@ -104,47 +105,51 @@ public abstract final class Commands
     // doc      document  WTF?
     // password
     
-    
     @CommandName("ABOUT")
     @CommandSummary("Displays program version information.")
     public static void About()
     {
-        import std.file;
-        auto fileName = thisExePath;
-        
-        uint dummy;
-        auto size = GetFileVersionInfoSizeA(fileName.ToCString, &dummy);
-        
-        auto versionInformation = new ubyte[size];
-        if (!GetFileVersionInfoA(fileName.ToCString, 0, size, versionInformation.ptr))
-            throw new RecoverableException("Call to Windows function GetFileVersionInfo failed.");
-        
-        auto text = appender!string;
-        text.put(lineEnding);
-        
-        foreach (property; [
-            "CompanyName",    
-            "FileDescription",
-            "FileVersion",    
-            "LegalCopyright", 
-            "OriginalFilename", 
-            "ProductName",    
-            "ProductVersion"])
+        version (Windows)
         {
-            uint length;
-            char* buffer;
+            import std.file;
+            auto fileName = thisExePath;
             
-            if (!VerQueryValueA(versionInformation.ptr, (r"\StringFileInfo\080904b0\" ~ property).ToCString, cast(LPVOID*)&buffer, &length))
-                throw new RecoverableException("Call to Windows function VerQueryValue failed.");
+            uint dummy;
+            auto size = GetFileVersionInfoSizeA(fileName.ToCString, &dummy);
             
-            text.put(property.padLeft(' ', 20));
-            text.put(": ");
-            text.put(buffer.FromCString);
+            auto versionInformation = new ubyte[size];
+            if (!GetFileVersionInfoA(fileName.ToCString, 0, size, versionInformation.ptr))
+                throw new RecoverableException("Call to Windows function GetFileVersionInfo failed.");
+            
+            auto text = appender!string;
             text.put(lineEnding);
+            
+            foreach (property; [
+                "CompanyName",    
+                "FileDescription",
+                "FileVersion",    
+                "LegalCopyright", 
+                "OriginalFilename", 
+                "ProductName",    
+                "ProductVersion"])
+            {
+                uint length;
+                char* buffer;
+                
+                if (!VerQueryValueA(versionInformation.ptr, (r"\StringFileInfo\080904b0\" ~ property).ToCString, cast(LPVOID*)&buffer, &length))
+                    throw new RecoverableException("Call to Windows function VerQueryValue failed.");
+                
+                text.put(property.padLeft(' ', 20));
+                text.put(": ");
+                text.put(buffer.FromCString);
+                text.put(lineEnding);
+            }
+            text.put(lineEnding);
+            
+            Program.Buffer.AddText(text.data);
         }
-        text.put(lineEnding);
-        
-        Program.Buffer.AddText(text.data);
+        else
+            Program.Buffer.AddText("ABOUT command not implemented.");
     }
     
     @CommandName("ACC", "ACCEPT")
@@ -224,7 +229,7 @@ public abstract final class Commands
             auto maxWidth = 0;
             
             foreach (name; UserDefinedColumn.Columns.keys)
-                maxWidth = max(maxWidth, name.intLength);
+                maxWidth = max(maxWidth, name.toUtf8Slice.intLength);
             
             if (maxWidth == 0)
             {
@@ -236,7 +241,7 @@ public abstract final class Commands
             {
                 text.put("  ");
                 
-                foreach (_; 0 .. maxWidth - name.intLength)
+                foreach (_; 0 .. maxWidth - name.toUtf8Slice.intLength)
                     text.put(" ");
                 
                 text.put(name);
@@ -597,7 +602,6 @@ public abstract final class Commands
         Settings.Computes ~= newComputeDefinition;
     }
     
-    
     @CommandName("COMMIT -", "COMMIT WORK")
     @CommandUsage("COMMIT [WORK] [COMMENT text | FORCE text [, system_change_number]]")
     @CommandSummary("Finalises the current database transaction.")
@@ -605,7 +609,6 @@ public abstract final class Commands
     {
         // Stub for the help details.  This command is actually executed by Oracle and not SQLPlusX.
     }
-    
     
     @CommandName("CONN", "CONNECT")
     @CommandUsage("CONN[ECT] {username/password@host | username/password | username@host | host}")
@@ -615,7 +618,6 @@ public abstract final class Commands
     {
         Program.Interpreter.BeginConnection(ConnectionDetails(remainingCommand));
     }
-    
     
     @CommandName("DEF", "DEFINE")
     @CommandUsage("DEF[INE] [name [= value]]")
@@ -661,13 +663,11 @@ public abstract final class Commands
         Program.AutoCompleteDatabase.AddDefine(name);
     }
     
-    
     @CommandName("DEL")
     @CommandUsage("DEL [{first_line | * | LAST} [last_line | * | LAST}]]")
     @CommandSummary("Deletes one or more lines from the previous command.")
     @CommandRemarks("Consider using Ctrl-Up and Ctrl-Down to edit the previous command instead.")
     public static void DeleteLinesFromTheBufferDummySignature() { } // This is handled in the Editor class.
-        
     
     @CommandName("GC")
     @CommandUsage("GC")
@@ -677,8 +677,6 @@ public abstract final class Commands
         import core.memory;
         GC.collect;
     }
-    
-    
     
     @CommandName("DESC", "DESCRIBE")
     @CommandUsage("DESC[RIBE] [schema.]object_name[@database_link_name]")
@@ -703,7 +701,6 @@ public abstract final class Commands
         Program.Database.Describe(name);
     }
     
-    
     @CommandName("DISCON", "DISCONNECT")
     @CommandUsage("DISCON[NECT]")
     @CommandSummary("Disconnects from a database.")
@@ -713,7 +710,6 @@ public abstract final class Commands
         Program.Database.Disconnect;
     }
     
-        
     @CommandName("EXEC", "EXECUTE")
     @CommandUsage("EXEC[UTE] statement")
     @CommandSummary("Executes a PL/SQL expression (usually a procedure call).")
@@ -722,7 +718,6 @@ public abstract final class Commands
     {
         Program.Database.Execute("BEGIN\n    " ~ remainingCommand ~ ";\nEND;\n", lineNumber);
     }
-    
     
     @CommandName("EXIT")
     @CommandName("QUIT")
@@ -736,13 +731,11 @@ public abstract final class Commands
         Program.Exit;
     }
     
-    
     @CommandName("HELP")
     @CommandUsage("HELP [command]")
     @CommandSummary("Provides guidance on client commands.")
     @CommandRemarks("HELP with no parameters lists available commands." ~ lineEnding ~ 
-                    "HELP on a specific command lists details of that command, a bit like this..." ~ lineEnding ~  // TODO
-                    "Do not play with fire; such a command could create a black whole.")
+                    "HELP on a specific command lists details of that command, a bit like this.")
     public static void Help(string remainingCommand)
     {
         if (remainingCommand.length == 0)
@@ -753,7 +746,7 @@ public abstract final class Commands
                 
                 foreach (command; getSymbolsByUDA!(Commands, CommandName))
                     foreach (commandName; getUDAs!(command, CommandName))
-                        result = max(result, commandName.CombinedName.intLength + 2);
+                        result = max(result, commandName.CombinedName.toUtf8Slice.intLength + 2);
                 
                 return result;
             }();
@@ -821,7 +814,6 @@ public abstract final class Commands
                 }
     }
     
-    
     @CommandName("HO", "HOST")
     @CommandUsage("HO[ST] os_command")
     @CommandSummary("Execute an operating system command.")
@@ -837,7 +829,6 @@ public abstract final class Commands
             Program.Buffer.AddText(result.output);
     }
     
-    
     @CommandName("RECON", "RECONNECT")
     @CommandUsage("RECON[NECT]")
     @CommandSummary("Reconnect the session using the previous connection details.")
@@ -846,12 +837,10 @@ public abstract final class Commands
         Program.Database.Connect(Program.Database.connectionDetails);
     }
     
-    
     @CommandName("REM", "REMARK")
     @CommandUsage("REM[ARK] comment")
     @CommandSummary("Comments are for readers and are ignored by the system.")
     public static void RemarkDummySignature(string remainingCommand) { }
-    
     
     @CommandName("ROLL -", "ROLLBACK WORK")
     @CommandUsage("ROLL[BACK WORK] [TO [SAVEPOINT] savepoint_name | FORCE 'text']")
@@ -863,12 +852,10 @@ public abstract final class Commands
         Program.Database.Execute("ROLLBACK " ~ remainingCommand, lineNumber);
     }
     
-    
     @CommandName("R", "RUN")
     @CommandUsage("R[UN]")
     @CommandSummary("Re-executes the last command.")
     public static void RunDummySignature(string remainingCommand) { } // Implemented in the Interpreter with "/".
-    
     
     @CommandName("PAU", "PAUSE")
     @CommandUsage("PAU[SE] text")
@@ -878,7 +865,6 @@ public abstract final class Commands
         immutable prompt = remainingCommand.length > 0 ? remainingCommand : "Press any key to continue...";
         Program.Interpreter.SetAcceptPrompt(new AcceptPrompt("", prompt, AcceptPrompt.ContentType.PressAnyKey));
     }
-    
     
     @CommandName("PRO", "PROMPT")
     @CommandUsage("PRO[MPT] text")
@@ -950,7 +936,6 @@ public abstract final class Commands
         Program.Buffer.AddText("Unknown SET option \"" ~ name ~ "\"." ~ lineEnding);
     }
     
-    
     enum showUsage = CommandUsage(
         function() 
         {
@@ -1004,7 +989,7 @@ public abstract final class Commands
                 
                 foreach (target; getSymbolsByUDA!(Settings, Settings.DisplayedByTheShowCommand))
                     foreach (commandName; getUDAs!(target, CommandName))
-                        result = max(result, commandName.CombinedName.intLength + 2);
+                        result = max(result, commandName.CombinedName.toUtf8Slice.intLength + 2);
                 
                 return result;
             }();            
@@ -1089,7 +1074,6 @@ public abstract final class Commands
         Program.Buffer.AddText("Unknown SHOW option \"" ~ name ~ "\"." ~ lineEnding);
     }
     
-    
     @CommandName("SPO", "SPOOL")
     @CommandUsage("SPO[OL] {OFF | filename}")
     @SubCommands("OFF")
@@ -1140,7 +1124,6 @@ public abstract final class Commands
             Program.Buffer.AddText("Direcory not found: \"" ~ directory ~ "\"" ~ lineEnding);
     }
     
-    
     @CommandName("SOURCE")
     @CommandUsage("SOURCE package | function | procedure | view")
     @CommandSummary("Extracts highlighted source code from the ALL_SOURCE or ALL_VIEWS data dictionary views.")
@@ -1157,7 +1140,6 @@ public abstract final class Commands
         Program.Database.ShowSource(name);
     }
     
-    
     @CommandName("START")
     @CommandUsage("{START | @ | @@} filename")
     @CommandSummary("Executes a script file.")
@@ -1172,19 +1154,18 @@ public abstract final class Commands
         }
         
         auto fullPath = FindFile(filename);
-        if (fullPath is null)
+        if (fullPath == "")
             Program.Buffer.AddText("File not found: " ~ filename ~ lineEnding);
         else
             Program.Interpreter.ProcessFile(fullPath, remainingCommand);
     }
-    
     
     @CommandName("UNDEF", "UNDEFINE")
     @CommandUsage("UNDEF[INE] name1 [name2...]")
     @CommandSummary("Clears one or more substitution variables.")
     public static void Undefine(string remainingCommand)
     {
-        auto parameters = SplitBySpaces(remainingCommand)[0 .. $];
+        auto parameters = remainingCommand.splitter(' ').filter!(p => p.length > 0);
         foreach (parameter; parameters)
         {
             auto name = parameter.toUpper;
@@ -1214,7 +1195,6 @@ public abstract final class Commands
                     Program.Settings.Timers.remove(name);
                 }
             }
-            
             
             if (timerName.length == 0)
             {
@@ -1268,11 +1248,8 @@ public abstract final class Commands
             default:
                 CommandUsage.OutputFor!Timing;
                 return;
-        } 
+        }
     }
-    
-    
-    
     
     @CommandName("TTI", "TTITLE")
     @CommandUsage("TTI[TLE] [OFF | ON] [COL x | S[KIP] x | TAB x | LE[FT] | CE[NTER] | R[IGHT] | BOLD | FOR[MAT] format spec | text | variable...]")
@@ -1407,19 +1384,13 @@ public abstract final class Commands
             return false;
         }
         
-        auto isPathKnown = false;
-        foreach (path; Settings.Paths)
-            if (path == directory)
-            {
-                isPathKnown = true;
-                break;
-            }
-        
-        if (!isPathKnown)
-            Settings.AddPath(directory);
-        
         Program.AutoCompleteDatabase.AddDirectory(directory);
         
+        foreach (path; Settings.Paths)
+            if (path == directory)
+                return true;
+        
+        Settings.AddPath(directory);
         return true;
     }
     
@@ -1481,7 +1452,7 @@ public class UserDefinedColumn
     public static UserDefinedColumn[string] Columns;
     
     private bool isEnabled = true;
-    public bool IsEnabled() const pure @nogc nothrow { return isEnabled; }
+    public bool IsEnabled() const pure @nogc nothrow => isEnabled;
     
     @CommandName("ON")
     @CommandUsage("ON")
@@ -1495,10 +1466,10 @@ public class UserDefinedColumn
     
     
     private int width = -1;
-    public int Width() const pure @nogc nothrow { return width; }
+    public int Width() const pure @nogc nothrow => width;
     
     private string formatSpecifier = "";
-    public string FormatSpecifier() const pure @nogc nothrow { return formatSpecifier; }
+    public string FormatSpecifier() const pure @nogc nothrow => formatSpecifier;
     
     public bool isNumericFormat = false;
     
@@ -1528,7 +1499,7 @@ public class UserDefinedColumn
     }
     
     private string heading = "";
-    public string Heading() const pure @nogc nothrow { return heading; }
+    public string Heading() const pure @nogc nothrow => heading;
     
     @CommandName("HEA", "HEADING")
     @CommandUsage("HEA[DING] heading")
@@ -1543,10 +1514,8 @@ public class UserDefinedColumn
         heading = heading.replace("|", lineEnding);
     }
     
-    
-    
     private string aliasedName = "";
-    public string AliasedName() const pure @nogc nothrow { return aliasedName; }
+    public string AliasedName() const pure @nogc nothrow => aliasedName;
     
     @CommandName("ALI", "ALIAS")
     @CommandUsage("ALI[AS] alias")
@@ -1557,9 +1526,8 @@ public class UserDefinedColumn
         Columns[aliasedName] = this;
     }
     
-    
     private string nullPlaceHolder = "";
-    public string NullPlaceHolder() const pure { return nullPlaceHolder; }
+    public string NullPlaceHolder() const pure => nullPlaceHolder;
     
     @CommandName("NUL", "NULL")
     @CommandUsage("NUL[L] place_holder")
@@ -1569,22 +1537,18 @@ public class UserDefinedColumn
         nullPlaceHolder = Interpreter.ConsumeToken(remainingCommand);
     }
     
-    
-    
     private bool isVisible = true;
-    public bool IsVisible() const pure @nogc nothrow { return isVisible; }
+    public bool IsVisible() const pure @nogc nothrow => isVisible;
     
     @CommandName("NOPRI", "NOPRINT")
     @CommandUsage("NOPRI[NT]")
     @CommandSummary("Hides the column.")
     public void Hide() { isVisible = false; } 
     
-    
-    
     public enum WrappingMode { None, Truncated, ByWord, ByCharacter }
     
     private WrappingMode wrap = WrappingMode.None;
-    public WrappingMode Wrap() const pure { return wrap; }
+    public WrappingMode Wrap() const pure => wrap;
     
     @CommandName("TRU", "TRUNCATED")
     @CommandUsage("TRU[NCATED]")
@@ -1606,8 +1570,6 @@ public class UserDefinedColumn
     @CommandRemarks("Specifies that a text too wide for this column is to be wrapped splitting words as necessary.")
     public void SplitWrapped() { wrap = WrappingMode.ByCharacter; } 
     
-    
-    
     @CommandName("CLE", "CLEAR")
     @CommandUsage("CLE[AR]")
     @CommandSummary("Removes all configured column formatting.")
@@ -1621,10 +1583,8 @@ public class UserDefinedColumn
             }
     }
     
-    
-    
     private JustificationMode justify = JustificationMode.Left;
-    public JustificationMode Justify() const pure { return justify; }
+    public JustificationMode Justify() const pure => justify;
     
     @CommandName("JUST", "JUSTIFY")
     @CommandUsage("JUST[IFY] {L[EFT] | C[ENTER] | C[ENTRE] | R[IGHT]}")
@@ -1646,10 +1606,8 @@ public class UserDefinedColumn
             Program.Buffer.AddText("Unknown COLUMN JUSTIFY option \"" ~ parameter ~ "\"");
     }
     
-    
-    
     private string newValueVariableName = "";
-    public string NewValueVariableName() { return newValueVariableName; }
+    public string NewValueVariableName() => newValueVariableName;
     
     @CommandName("NEW_V", "NEW_VALUE")
     @CommandUsage("NEW_V[ALUE] variable")
@@ -1659,10 +1617,8 @@ public class UserDefinedColumn
         newValueVariableName = Interpreter.ConsumeToken(remainingCommand).toUpper;
     }
     
-    
-    
     private string oldValueVariableName = "";
-    public string OldValueVariableName() { return oldValueVariableName; }
+    public string OldValueVariableName() => oldValueVariableName;
     
     @CommandName("OLD_V", "OLD_VALUE")
     @CommandUsage("OLD_V[ALUE] variable")
@@ -1671,8 +1627,6 @@ public class UserDefinedColumn
     {
         oldValueVariableName = Interpreter.ConsumeToken(remainingCommand).toUpper;
     }
-    
-    
     
     @CommandName("LIKE", "LIKE")
     @CommandUsage("LIKE column")

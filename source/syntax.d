@@ -1,11 +1,12 @@
 module syntax;
 
 import std.array : split;
-import std.ascii : isAlpha, isAlphaNum;
 import std.string : toUpper;
 import std.typecons : Tuple;
+import std.uni : isAlpha, isAlphaNum;
 
 import program;
+import utf8_slice;
 
 public final class Syntax
 {
@@ -18,15 +19,11 @@ public final class Syntax
         public bool isInMultiLineDoubleQuotes = false;
     }
     
-    public FormattedText[] Highlight(const string text)
-    {
-        return Highlight(text.split(lineEnding));
-    }
+    public FormattedText[] Highlight(const string text) => 
+        Highlight(text.split(lineEnding));
     
-    public FormattedText[] Highlight(const string text, ref CarryOverHighlightingState state, const int cursorLine = -1, const int cursorColumn = -1, ubyte opacity = 255)
-    {
-        return Highlight(text.split(lineEnding), state, cursorLine, cursorColumn, opacity);
-    }
+    public FormattedText[] Highlight(const string text, ref CarryOverHighlightingState state, const int cursorLine = -1, const int cursorColumn = -1, ubyte opacity = 255) =>
+        Highlight(text.split(lineEnding), state, cursorLine, cursorColumn, opacity);
     
     public FormattedText[] Highlight(const string[] lines, const int cursorLine = -1, const int cursorColumn = -1, ubyte opacity = 255)
     {
@@ -49,11 +46,11 @@ public final class Syntax
             if (location1.Line   >= 0 && 
                 location1.Line   < lines.length && 
                 location1.Column >= 0 && 
-                location1.Column < lines[location1.Line].length &&
+                location1.Column < lines[location1.Line].toUtf8Slice.length &&
                 location2.Line   >= 0 && 
                 location2.Line   < lines.length && 
                 location2.Column >= 0 && 
-                location2.Column < lines[location2.Line].length)
+                location2.Column < lines[location2.Line].toUtf8Slice.length)
             {
                 bracketLocations[bracketLocationCount] = location1;
                 bracketLocationCount++;
@@ -64,20 +61,22 @@ public final class Syntax
         }
         
         if (cursorLine   >= 0 && cursorLine   < lines.length && 
-            cursorColumn >= 0 && cursorColumn < lines[cursorLine].length)
+            cursorColumn >= 0 && cursorColumn < lines[cursorLine].toUtf8Slice.length)
         {
-            Location findNext(const char character, const int startLine, const int startColumn)
+            Location findNext(const dchar character, const int startLine, const int startColumn)
             {
                 for (int line = startLine; line < lines.length; line++)
                 {
                     const lineStartColumn = line == startLine ? startColumn : 0;
                     
-                    for (int column = lineStartColumn; line < lines.length && column < lines[line].length; column++)
+                    for (int column = lineStartColumn; 
+                         line < lines.length && column < lines[line].toUtf8Slice.length; 
+                         column++)
                     {
-                        if (lines[line][column] == character &&
+                        if (lines[line].toUtf8Slice[column] == character &&
                                (character != '*' ||
-                                   (column + 1 < lines[line].length && 
-                                    lines[line][column + 1] == '/')))
+                                   (column + 1 < lines[line].toUtf8Slice.length && 
+                                    lines[line].toUtf8Slice[column + 1] == '/')))
                         {
                             return Location(line, column);
                         }
@@ -85,7 +84,7 @@ public final class Syntax
                         if (character == '\'' || character == '\"' || character == '*')
                             continue;
                         
-                        if (lines[line][column] == '\'')
+                        if (lines[line].toUtf8Slice[column] == '\'')
                         {
                             const match = findNext('\'', line, column + 1);
                             line   = match.Line;
@@ -93,7 +92,7 @@ public final class Syntax
                             continue;
                         }
                         
-                        if (lines[line][column] == '\"')
+                        if (lines[line].toUtf8Slice[column] == '\"')
                         {
                             const match = findNext('\"', line, column + 1);
                             line   = match.Line;
@@ -101,7 +100,7 @@ public final class Syntax
                             continue;
                         }
                         
-                        if (lines[line][column] == '(')
+                        if (lines[line].toUtf8Slice[column] == '(')
                         {
                             const match = findNext(')', line, column + 1);
                             line   = match.Line;
@@ -109,7 +108,7 @@ public final class Syntax
                             continue;
                         }
                         
-                        if (lines[line][column] == '[')
+                        if (lines[line].toUtf8Slice[column] == '[')
                         {
                             const match = findNext(']', line, column + 1);
                             line   = match.Line;
@@ -117,7 +116,7 @@ public final class Syntax
                             continue;
                         }
                         
-                        if (lines[line][column] == '{')
+                        if (lines[line].toUtf8Slice[column] == '{')
                         {
                             const match = findNext('}', line, column + 1);
                             line   = match.Line;
@@ -125,7 +124,9 @@ public final class Syntax
                             continue;
                         }
                         
-                        if (lines[line][column] == '/' && column + 1 < lines[line].length && lines[line][column + 1] == '*')
+                        if (lines[line].toUtf8Slice[column] == '/' && 
+                            column + 1 < lines[line].toUtf8Slice.length && 
+                            lines[line].toUtf8Slice[column + 1] == '*')
                         {
                             const match = findNext('*', line, column + 2);
                             line   = match.Line;
@@ -138,20 +139,19 @@ public final class Syntax
                 return Location(lines.intLength, 0);
             }
             
-            
-            Location findPrevious(const char character, const int startLine, const int startColumn)
+            Location findPrevious(const dchar character, const int startLine, const int startColumn)
             {
                 if (startLine >= 0)
                     for (int line = startLine; line >= 0; line--)
                     {
-                        const lineStartColumn = line == startLine ? startColumn : lines[line].intLength - 1;
+                        const lineStartColumn = line == startLine ? startColumn : lines[line].toUtf8Slice.intLength - 1;
                         
                         for (int column = lineStartColumn; line >= 0 && column >= 0; column--)
                         {
-                            if (lines[line][column] == character &&
+                            if (lines[line].toUtf8Slice[column] == character &&
                                    (character != '*' ||
                                        (column > 0 && 
-                                        lines[line][column - 1] == '/')))
+                                        lines[line].toUtf8Slice[column - 1] == '/')))
                             {
                                 return Location(line, column);
                             }
@@ -159,7 +159,7 @@ public final class Syntax
                             if (character == '\'' || character == '\"' || character == '*')
                                 continue;
                             
-                            if (lines[line][column] == ')')
+                            if (lines[line].toUtf8Slice[column] == ')')
                             {
                                 const match = findPrevious('(', line, column - 1);
                                 line   = match.Line;
@@ -167,7 +167,7 @@ public final class Syntax
                                 continue;
                             }
                             
-                            if (lines[line][column] == ']')
+                            if (lines[line].toUtf8Slice[column] == ']')
                             {
                                 const match = findPrevious('[', line, column - 1);
                                 line   = match.Line;
@@ -175,7 +175,7 @@ public final class Syntax
                                 continue;
                             }
                             
-                            if (lines[line][column] == '}')
+                            if (lines[line].toUtf8Slice[column] == '}')
                             {
                                 const match = findPrevious('{', line, column - 1);
                                 line   = match.Line;
@@ -183,7 +183,7 @@ public final class Syntax
                                 continue;
                             }
                             
-                            if (lines[line][column] == '\'')
+                            if (lines[line].toUtf8Slice[column] == '\'')
                             {
                                 const match = findPrevious('\'', line, column - 1);
                                 line   = match.Line;
@@ -191,7 +191,7 @@ public final class Syntax
                                 continue;
                             }
                             
-                            if (lines[line][column] == '\"')
+                            if (lines[line].toUtf8Slice[column] == '\"')
                             {
                                 const match = findPrevious('\"', line, column - 1);
                                 line   = match.Line;
@@ -199,7 +199,8 @@ public final class Syntax
                                 continue;
                             }
                             
-                            if (lines[line][column] == '/' && column > 0 && lines[line][column - 1] == '*')
+                            if (lines[line].toUtf8Slice[column] == '/' && column > 0 && 
+                                lines[line].toUtf8Slice[column - 1] == '*')
                             {
                                 const match = findPrevious('*', line, column - 2);
                                 line   = match.Line;
@@ -212,8 +213,8 @@ public final class Syntax
                 return Location(-1, 0);
             }
             
-            const characterLeft  = cursorColumn == 0 ? ' ' : lines[cursorLine][cursorColumn - 1];
-            const characterRight = lines[cursorLine][cursorColumn];
+            const characterLeft  = cursorColumn == 0 ? ' ' : lines[cursorLine].toUtf8Slice[cursorColumn - 1];
+            const characterRight = lines[cursorLine].toUtf8Slice[cursorColumn];
             
             if      (characterLeft  == '(') AddTwoLocations(findNext(')', cursorLine, cursorColumn), Location(cursorLine, cursorColumn - 1));
             else if (characterLeft  == '[') AddTwoLocations(findNext(']', cursorLine, cursorColumn), Location(cursorLine, cursorColumn - 1));
@@ -227,7 +228,7 @@ public final class Syntax
         FormattedText[] formattedLines;
         formattedLines.reserve(lines.length);
         
-        nextLineLoop: 
+        nextLineLoop:
         foreach (lineNumber, text; lines)
         {
             auto formattedLine = FormattedText(text, null);
@@ -247,27 +248,30 @@ public final class Syntax
                 unformattedTextStart = formattingEndIndex;
             }
             
+            auto utf8 = text.toUtf8Slice;
+            auto utf8Length = utf8.length;
+            
             thisLineLoop: 
-            while (index < text.length)
+            while (index < utf8Length)
             {
                 const startIndex = index;
-                const character = text[index];
+                const character = utf8[index];
                 
                 if (state.isInMultiLineComment ||
                      (character == '/' && 
-                     index + 1 < text.length && 
-                     text[index + 1] == '*'))
+                     index + 1 < utf8Length && 
+                     utf8[index + 1] == '*'))
                 {   
                     if (!state.isInMultiLineComment)
                         index += 2;
                     
-                    while (index < text.length)
+                    while (index < utf8Length)
                     {
-                        const nextCharacter = text[index];
+                        const nextCharacter = utf8[index];
                         
                         if (nextCharacter == '*' &&
-                            index + 1 < text.length &&
-                            text[index + 1] == '/')
+                            index + 1 < utf8Length &&
+                            utf8[index + 1] == '/')
                         {
                             index += 2;
                             AddFormatting(startIndex, index, NamedColor.Comment, FontStyle.Normal);
@@ -280,15 +284,15 @@ public final class Syntax
                     
                     // Here, we didn't see the end of this comment on this line.
                     state.isInMultiLineComment = true;
-                    AddFormatting(startIndex, text.intLength, NamedColor.Comment, FontStyle.Normal);
+                    AddFormatting(startIndex, utf8.intLength, NamedColor.Comment, FontStyle.Normal);
                     continue nextLineLoop;
                 }
                 
                 if (character == '-' && 
-                         index + 1 < text.length && 
-                         text[index + 1] == '-')
+                         index + 1 < utf8Length && 
+                         utf8[index + 1] == '-')
                 {
-                    AddFormatting(startIndex, text.intLength, NamedColor.Comment, FontStyle.Normal);
+                    AddFormatting(startIndex, utf8.intLength, NamedColor.Comment, FontStyle.Normal);
                     continue nextLineLoop;
                 }
                 
@@ -296,9 +300,9 @@ public final class Syntax
                 {
                     index++;
                     
-                    while (index < text.length)
+                    while (index < utf8Length)
                     {
-                        const nextCharacter = text[index];
+                        const nextCharacter = utf8[index];
                         
                         if (!nextCharacter.isAlphaNum && nextCharacter != '_')
                             break;
@@ -306,7 +310,7 @@ public final class Syntax
                         index++;
                     }
                     
-                    const word = text[startIndex .. index].toUpper;
+                    const word = utf8[startIndex .. index].toUpper;
                     
                     if (const colorRef = word in keywordLookUp)
                         AddFormatting(startIndex, index, *colorRef, FontStyle.Bold);
@@ -321,10 +325,10 @@ public final class Syntax
                     if (!state.isInMultiLineSingleQuotes)
                         index++;
                     
-                    while (index < text.length && text[index] != '\'')
+                    while (index < utf8Length && utf8[index] != '\'')
                         index++;
                     
-                    state.isInMultiLineSingleQuotes = index == text.length;
+                    state.isInMultiLineSingleQuotes = index == utf8Length;
                     
                     if (!state.isInMultiLineSingleQuotes)
                         index++;
@@ -339,15 +343,15 @@ public final class Syntax
                     if (!state.isInMultiLineDoubleQuotes)
                         index++;
                     
-                    while (index < text.length && text[index] != '"')
+                    while (index < utf8Length && utf8[index] != '"')
                         index++;
                     
-                    state.isInMultiLineDoubleQuotes = index == text.length;
+                    state.isInMultiLineDoubleQuotes = index == utf8Length;
                     
                     if (!state.isInMultiLineDoubleQuotes)
                         index++;
                     
-                    const word = text[startIndex .. index];
+                    const word = utf8[startIndex .. index];
                     
                     if (const colorRef = word in Program.AutoCompleteDatabase.IdentifierLookup)
                         AddFormatting(startIndex, index, *colorRef, FontStyle.Bold);
@@ -374,7 +378,7 @@ public final class Syntax
                 index++;
             }
             
-            AddFormatting(text.intLength, text.intLength, NamedColor.Normal, FontStyle.Normal);
+            AddFormatting(utf8.intLength, utf8.intLength, NamedColor.Normal, FontStyle.Normal);
         }
         
         return formattedLines;
@@ -532,6 +536,8 @@ public final class Syntax
             "MODIFY":                        NamedColor.Keyword, 
             "NATURAL":                       NamedColor.Keyword, 
             "NATURALN":                      NamedColor.Keyword, 
+            "NCHAR":                         NamedColor.Keyword, 
+            "NVARCHAR2":                     NamedColor.Keyword, 
             "NEW":                           NamedColor.Keyword, 
             "NEXT":                          NamedColor.Keyword, 
             "NEXTVAL":                       NamedColor.Keyword, 

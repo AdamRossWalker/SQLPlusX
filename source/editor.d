@@ -1,17 +1,19 @@
 module editor;
 
-import std.algorithm : min, max, all, filter, map, splitter;
+import std.algorithm : min, max, countUntil, all, filter, map, splitter;
 import std.array : array, join, replace;
-import std.ascii : isAlphaNum, isWhite;
 import std.conv :to, ConvException;
 import std.range : repeat, retro, appender, enumerate;
 import std.datetime : Clock;
 import std.datetime.systime;
 import std.string : strip, splitLines, rightJustify, lineSplitter, toUpper, toLower, isNumeric;
 import std.typecons : Flag, Yes, No, tuple;
+import std.uni : isAlphaNum, isWhite;
+import std.utf : byDchar;
 
 import program;
 import range_extensions;
+import utf8_slice;
 
 public final class AcceptPrompt
 {
@@ -19,31 +21,31 @@ public final class AcceptPrompt
     public enum InputType { Text, Number, Date }
 
     private string name;
-    public string Name() const @nogc nothrow { return name; }
+    public string Name() const @nogc nothrow => name;
     
     private string prompt;
-    public string Prompt() const @nogc nothrow { return prompt; }
+    public string Prompt() const @nogc nothrow => prompt;
     
     private ContentType content;
-    public ContentType Content() const @nogc nothrow { return content; }
+    public ContentType Content() const @nogc nothrow => content;
     
     private InputType type;
-    public InputType Type() const @nogc nothrow { return type; }
+    public InputType Type() const @nogc nothrow => type;
     
     private bool isHidden;
-    public bool IsHidden() const @nogc nothrow { return isHidden; }
+    public bool IsHidden() const @nogc nothrow => isHidden;
     
     private bool hasResult = false;
-    public bool HasResult() const @nogc nothrow { return hasResult; }
+    public bool HasResult() const @nogc nothrow => hasResult;
     
     private string result;
-    public string Result() const @nogc nothrow { return result; }
+    public string Result() const @nogc nothrow => result;
     
     private string defaultValue;
-    public string DefaultValue() const @nogc nothrow { return defaultValue; }
+    public string DefaultValue() const @nogc nothrow => defaultValue;
     
     private string format;
-    public string Format() const @nogc nothrow { return format; }
+    public string Format() const @nogc nothrow => format;
     
     public void SetResult(string result)
     {
@@ -73,7 +75,7 @@ public final class AcceptPrompt
     {
         this.name = name;
         
-        if (prompt is null)
+        if (prompt == "")
             this.prompt = "Enter value for " ~ name ~ ":";
         else
             this.prompt = prompt;
@@ -185,9 +187,9 @@ private final class CommandHistory
         if (commandHistoryIndex == 0)
             return;
         
-        auto command = commandHistory[commandHistoryIndex - 1].lineSplitter.array;
+        auto commandLines = commandHistory[commandHistoryIndex - 1].lineSplitter.array;
     
-        commandHistory[commandHistoryIndex - 1] = (command[0 .. firstLine] ~ command[lastLine .. $]).join(lineEnding);
+        commandHistory[commandHistoryIndex - 1] = (commandLines[0 .. firstLine] ~ commandLines[lastLine .. $]).join(lineEnding);
     }
     
     auto HistoryDescending() @nogc nothrow
@@ -196,17 +198,16 @@ private final class CommandHistory
     }
 }
 
-
 public final class EditorBufferItem : BufferItem
 {
     private auto cursorPositionLine = 0;
-    public auto CursorPositionLine() const @nogc nothrow { return cursorPositionLine; }
+    public auto CursorPositionLine() const @nogc nothrow => cursorPositionLine;
     
     // The cursor is before the character indicated by this index.  Note, 
-    // this means it could equal lines[cursorPositionLine].length, and 
-    // therefore be AFTER the last character index.
+    // this means it could equal lines[cursorPositionLine].toUtf8Slice.length, 
+    // and therefore be AFTER the last character index.
     private auto cursorPositionColumn = 0;
-    public auto CursorPositionColumn() const @nogc nothrow { return Indentation + cursorPositionColumn; }
+    public auto CursorPositionColumn() const @nogc nothrow => Indentation + cursorPositionColumn;
     
     private int currentBufferLine = -1;
     
@@ -217,12 +218,12 @@ public final class EditorBufferItem : BufferItem
         
         auto offset = 0;
         foreach (line; lines[0 .. min(lineNumber, $)])
-            offset += line.intLength + lineEnding.intLength;
+            offset += line.toUtf8Slice.intLength + lineEnding.intLength;
         
         if (lineNumber >= lines.length)
             return offset;
         
-        return offset + min(max(0, column), lines[lineNumber].intLength);
+        return offset + min(max(0, column), lines[lineNumber].toUtf8Slice.intLength);
     }
     
     immutable struct TextLocation
@@ -235,48 +236,47 @@ public final class EditorBufferItem : BufferItem
     {
         foreach (lineNumber, line; lines)
         {
-            if (offset < line.length + lineEnding.length)
+            auto utf8 = line.toUtf8Slice;
+        
+            if (offset < utf8.length + lineEnding.length)
                 return TextLocation(cast(int)lineNumber, max(0, offset));
             
-            offset -= line.intLength + lineEnding.intLength;
+            offset -= utf8.intLength + lineEnding.intLength;
         }
         
-        return TextLocation(lines.intLength - 1, lines[$ - 1].intLength);
+        return TextLocation(lines.intLength - 1, lines[$ - 1].toUtf8Slice.intLength);
     }
     
-    
-    public auto CursorOffset() const @nogc nothrow
-    {
-        return GetOffsetFrom(cursorPositionLine, cursorPositionColumn);
-    }
+    public auto CursorOffset() const @nogc nothrow => GetOffsetFrom(cursorPositionLine, cursorPositionColumn);
     
     private auto selectionStartLine = 0;
-    public auto SelectionStartLine() const @nogc nothrow { return selectionStartLine; }
+    public auto SelectionStartLine() const @nogc nothrow => selectionStartLine;
     
     // Same semantics as CursorPositionColumn.
     private auto selectionStartColumn = 0;
-    public auto SelectionStartColumn() const @nogc nothrow { return Indentation + selectionStartColumn; }
+    public auto SelectionStartColumn() const @nogc nothrow => Indentation + selectionStartColumn;
     
     private auto selectionEndLine = 0;
-    public auto SelectionEndLine() const @nogc nothrow { return selectionEndLine; }
+    public auto SelectionEndLine() const @nogc nothrow => selectionEndLine;
     
     // Same semantics as CursorPositionColumn.
     private auto selectionEndColumn = 0;
-    public auto SelectionEndColumn() const @nogc nothrow { return Indentation + selectionEndColumn; }
+    public auto SelectionEndColumn() const @nogc nothrow => Indentation + selectionEndColumn;
     
     private class UndoFrame
     {
-        private bool isTypedText = false;
-        private string[] lines;
-        private auto cursorPositionLine = 0;
+        private auto cursorPositionLine   = 0;
         private auto cursorPositionColumn = 0;
-        private auto selectionStartLine    = 0;
-        private auto selectionStartColumn  = 0;
-        private auto selectionEndLine      = 0;
-        private auto selectionEndColumn    = 0;
-                
-        auto Lines() const @nogc nothrow { return lines; }
-        auto IsTypedText() const @nogc nothrow { return isTypedText; }
+        private auto selectionStartLine   = 0;
+        private auto selectionStartColumn = 0;
+        private auto selectionEndLine     = 0;
+        private auto selectionEndColumn   = 0;
+        
+        private string[] lines;
+        auto Lines() const @nogc nothrow => lines;
+        
+        private bool isTypedText = false;
+        auto IsTypedText() const @nogc nothrow => isTypedText;
         
         public this(bool isTypedText) nothrow
         {
@@ -361,89 +361,97 @@ public final class EditorBufferItem : BufferItem
         if (lineNumber >= lines.length)
             return "";
         
-        const text = lines[lineNumber];
+        const text = lines[lineNumber].toUtf8Slice;
+        const textLength = text.intLength;
         
-        if (lineNumber > 0 && text.length == 0)
+        if (lineNumber > 0 && lines[lineNumber].length == 0)
             return "";
         
-        if (start >= Prompt.length + text.length)
+        auto prompt = Prompt.toUtf8Slice;
+        auto promptLength = prompt.intLength;
+        
+        if (start >= promptLength + textLength)
             return "";
         
         static char[BufferItem.MaxTemporaryTextWidth] destination;
         int destinationPosition = 0;
         int left = start;
         
-        if (left >= Prompt.intLength)
-            left -= Prompt.intLength;
+        if (left >= promptLength)
+            left -= promptLength;
         else
         {
-            const copyLength = min(Prompt.intLength - left, destination.intLength);
-            if (copyLength > 0)
+            const copyLength = promptLength - left;
+            
+            if (lineNumber > 0)
+                destination[0 .. copyLength] = ' ';
+            else
             {
-                if (lineNumber > 0)
-                    destination[0 .. copyLength] = ' ';
-                else
-                    destination[0 .. copyLength] = Prompt[left .. left + copyLength];
-                
-                destinationPosition = copyLength;
+                const copyText = prompt[left .. $];
+                destination[0 .. min($, copyText.length)] = copyText[0 .. min($, destination.length)];
             }
             
+            destinationPosition = copyLength;
             left = 0;
         }
         
+        int remainingLength = length - promptLength;
+        if (remainingLength > 0)
         {
-            const copyLength = min(text.intLength - left, destination.intLength - destinationPosition);
-            if (copyLength > 0)
+            const copyLength = min(textLength - left, remainingLength);
+            
+            if (acceptPrompt !is null && acceptPrompt.IsHidden)
+                destination[destinationPosition .. min($, destinationPosition + copyLength)] = '*';
+            else
             {
-                if (acceptPrompt !is null && acceptPrompt.IsHidden)
-                    destination[destinationPosition .. destinationPosition + copyLength] = '*';
-                else 
-                    destination[destinationPosition .. destinationPosition + copyLength] = text[left .. left + copyLength];
-                
-                destinationPosition += copyLength;
+                const copyText = text[left .. left + copyLength];
+                destination[destinationPosition .. min($, destinationPosition + copyText.length)] = copyText[0 .. min($, destination.length - destinationPosition)];
             }
+            
+            destinationPosition += copyLength;
         }
         
-        return destination[0 .. min(length, destinationPosition)];
+        return destination.toUtf8Slice[0 .. min(length, destinationPosition)];
     }
     
-    public override int LineCount() const @nogc nothrow { return lines.intLength; }
+    public override int LineCount() const @nogc nothrow => lines.intLength;
     
     private auto widthInCharacters = 0;
-    public override int WidthInCharacters() const @nogc nothrow { return widthInCharacters; }
+    public override int WidthInCharacters() const @nogc nothrow => widthInCharacters;
     
     private void RecalculateWidth() @nogc nothrow
     {
         auto width = 0;
         foreach (line; lines)
-            width = max(width, Indentation + line.intLength);
+            width = max(width, Indentation + line.toUtf8Slice.intLength);
         
         widthInCharacters = width;
     }
     
     // Return rubbish for this.  It can't be collected and so is a 
     // waste of time maintaining a count for it.
-    public override size_t IndicativeTotalSize() const @nogc nothrow { return 0; }
+    public override size_t IndicativeTotalSize() const @nogc nothrow => 0;
     
-    public override string CopyWholeItem() const nothrow { return Text; }
+    public override string CopyWholeItem() const nothrow => Text;
     
     private auto basePrompt = "SQL>";
-    public string BasePrompt() const @nogc nothrow { return basePrompt; }
+    public string BasePrompt() const @nogc nothrow => basePrompt;
     public void BasePrompt(string value) @nogc nothrow 
-    { 
-        basePrompt = value[0 .. min($, BufferItem.MaxTemporaryTextWidth)];
+    {
+        auto utf8 = value.toUtf8Slice;
+        basePrompt = utf8[0 .. min(utf8.length, BufferItem.MaxTemporaryTextWidth)];
         
         cachedTimePromptLength = promptTimePrefixLength + basePrompt.intLength;
         cachedTimePrompt[promptTimePrefixLength .. cachedTimePromptLength] = basePrompt;
     }
     
     private bool isPromptTimeOn = false;
-    public bool IsPromptTimeOn() const @nogc nothrow { return isPromptTimeOn; }
+    public bool IsPromptTimeOn() const @nogc nothrow => isPromptTimeOn;
     public void IsPromptTimeOn(bool value) @nogc nothrow { isPromptTimeOn = value; }
     
-    enum promptTimePrefixLength         = "00:00:00 ".intLength;
+    enum promptTimePrefixLength                                     = "00:00:00 ".intLength;
     private char[BufferItem.MaxTemporaryTextWidth] cachedTimePrompt = "00:00:00 SQL>";
-    private int cachedTimePromptLength  = "00:00:00 SQL>".intLength;
+    private int cachedTimePromptLength                              = "00:00:00 SQL>".intLength;
     
     private SysTime promptTime;
     
@@ -478,7 +486,7 @@ public final class EditorBufferItem : BufferItem
             return BasePrompt;
     }
     
-    public auto Indentation() const @nogc nothrow { return Prompt.intLength; }
+    public auto Indentation() const @nogc nothrow => Prompt.intLength;
     
     public StringReference IndentationSpace(const size_t lineNumber) @nogc nothrow const
     {
@@ -488,8 +496,8 @@ public final class EditorBufferItem : BufferItem
         if (!Program.Settings.IsPromptNumberingOn || Indentation < 3)
             return allBlanks[0 .. Indentation];
         
-        auto charactersWitten = toStringEmplace!3(lineNumber + 1, indentationPlaceholder).length;
-        indentationPlaceholder[charactersWitten .. Indentation] = ' ';
+        auto charactersWritten = toStringEmplace!3(lineNumber + 1, indentationPlaceholder).length;
+        indentationPlaceholder[charactersWritten .. Indentation] = ' ';
         return indentationPlaceholder[0 .. Indentation];
     }
     
@@ -497,7 +505,7 @@ public final class EditorBufferItem : BufferItem
     private CommandHistory currentCommandHistory;
     private CommandHistory[string] commandHistoriesByAcceptPromptName;
     
-    public auto CommandHistoryDescending() @nogc nothrow { return currentCommandHistory.HistoryDescending; }
+    public auto CommandHistoryDescending() @nogc nothrow => currentCommandHistory.HistoryDescending;
     
     public void ClearCommandHistory() @nogc nothrow { currentCommandHistory.Clear; }
     
@@ -530,7 +538,7 @@ public final class EditorBufferItem : BufferItem
     }
     
     private auto isInsertModeOn = false;
-    public int IsInsertModeOn() const @nogc nothrow { return isInsertModeOn; }
+    public int IsInsertModeOn() const @nogc nothrow => isInsertModeOn;
     
     public void ToggleInsertMode() @nogc nothrow 
     {
@@ -592,7 +600,7 @@ public final class EditorBufferItem : BufferItem
        currentCommandHistory = commandHistoriesByAcceptPromptName.require(prompt.Name, new CommandHistory);
     }
     
-    public bool HasAcceptPrompt() @nogc nothrow { return acceptPrompt !is null; }
+    public bool HasAcceptPrompt() @nogc nothrow => acceptPrompt !is null;
     
     public bool CheckPressAnyKey()
     {
@@ -646,10 +654,11 @@ public final class EditorBufferItem : BufferItem
         if (lineNumber >= formattedLines.length)
             return null;
         
-        const int promptWidth = Prompt.intLength;
+        const prompt = Prompt.toUtf8Slice;
+        const int promptWidth = prompt.intLength;
         const sourceLine = formattedLines[lineNumber];
         
-        if (start >= Prompt.length + sourceLine.Text.length)
+        if (start >= prompt.length + sourceLine.Text.toUtf8Slice.length)
             return null;
         
         static FormattedText.Span[128] spans;
@@ -659,7 +668,7 @@ public final class EditorBufferItem : BufferItem
         if (start < promptEnd)
         {
             if (lineNumber == 0)
-                spans[spanCount] = FormattedText.Span(Prompt[start .. promptEnd], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptOpacity);
+                spans[spanCount] = FormattedText.Span(prompt[start .. promptEnd], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptOpacity);
             else
                 spans[spanCount] = FormattedText.Span(IndentationSpace(lineNumber)[start .. promptEnd], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptNumbersOpacity);
             
@@ -672,7 +681,7 @@ public final class EditorBufferItem : BufferItem
         if (acceptPrompt !is null && acceptPrompt.IsHidden)
         {
             const starsStart = max(0, screenLeft);
-            const starsEnd   = min(screenRight, cast(int)sourceLine.Text.intLength);
+            const starsEnd   = min(screenRight, cast(int)sourceLine.Text.toUtf8Slice.intLength);
             
             if (starsEnd > starsStart)
             {
@@ -692,7 +701,7 @@ public final class EditorBufferItem : BufferItem
             if (textStart >= textEnd)
                 continue;
             
-            spans[spanCount] = FormattedText.Span(sourceLine.Text[textStart .. textEnd], textStart + promptWidth - start, span.Color, span.Style, span.Opacity);
+            spans[spanCount] = FormattedText.Span(sourceLine.Text.toUtf8Slice[textStart .. textEnd], textStart + promptWidth - start, span.Color, span.Style, span.Opacity);
             spanCount++;
             
             if (spanCount >= spans.length)
@@ -700,7 +709,7 @@ public final class EditorBufferItem : BufferItem
                 // Patch up the last entry so the formatting may be lost, but the text isn't.
                 const oldStart = spans[$ - 1].StartColumn;
                 const left = oldStart - promptWidth + start;
-                spans[$ - 1] = FormattedText.Span(sourceLine.Text[left .. $], oldStart, NamedColor.Normal, FontStyle.Normal, 255);
+                spans[$ - 1] = FormattedText.Span(sourceLine.Text.toUtf8Slice[left .. $], oldStart, NamedColor.Normal, FontStyle.Normal, 255);
                 return spans;
             }
         }
@@ -717,16 +726,12 @@ public final class EditorBufferItem : BufferItem
         InvalidateFormatting;
     }
     
-    private bool IsTextSelected() const @nogc nothrow
-    {
-        return selectionStartLine   != selectionEndLine || 
-               selectionStartColumn != selectionEndColumn;
-    }
+    private bool IsTextSelected() const @nogc nothrow =>
+        selectionStartLine   != selectionEndLine || 
+        selectionStartColumn != selectionEndColumn;
     
-    public bool IsLineSelected(const int lineNumber) const
-    {
-        return selectionStartLine <= lineNumber && lineNumber <= selectionEndLine;
-    }
+    public bool IsLineSelected(const int lineNumber) const =>
+        selectionStartLine <= lineNumber && lineNumber <= selectionEndLine;
     
     public int SelectionStartOnLine(const int lineNumber) const
     {
@@ -741,17 +746,17 @@ public final class EditorBufferItem : BufferItem
         if (lineNumber == selectionEndLine)
             return Indentation + selectionEndColumn;
         
-        return Indentation + lines[lineNumber].intLength + 1;
+        return Indentation + lines[lineNumber].toUtf8Slice.intLength + 1;
     }
     
     public string SelectedText() const
     {
         if (selectionStartLine == selectionEndLine)
-            return lines[selectionStartLine][selectionStartColumn .. selectionEndColumn];
+            return lines[selectionStartLine].toUtf8Slice[selectionStartColumn .. selectionEndColumn];
         
         auto selectedText = appender!string;
         
-        selectedText.put(lines[selectionStartLine][selectionStartColumn .. $]);
+        selectedText.put(lines[selectionStartLine].toUtf8Slice[selectionStartColumn .. $]);
         selectedText.put(lineEnding);
         
         foreach (line; selectionStartLine + 1 .. selectionEndLine)
@@ -760,7 +765,7 @@ public final class EditorBufferItem : BufferItem
             selectedText.put(lineEnding);
         }
         
-        selectedText.put(lines[selectionEndLine][0 .. selectionEndColumn]);
+        selectedText.put(lines[selectionEndLine].toUtf8Slice[0 .. selectionEndColumn]);
                
         return selectedText.data;
     }
@@ -785,8 +790,8 @@ public final class EditorBufferItem : BufferItem
         if (!IsTextSelected)
             return false;
         
-        auto textBeforeSelection = lines[selectionStartLine][0 .. selectionStartColumn];
-        auto textAfterSelection  = lines[selectionEndLine][selectionEndColumn .. $];
+        auto textBeforeSelection = lines[selectionStartLine].toUtf8Slice[0 .. selectionStartColumn];
+        auto textAfterSelection  = lines[selectionEndLine].toUtf8Slice[selectionEndColumn .. $];
         
         lines[selectionStartLine] = textBeforeSelection ~ textAfterSelection;
         
@@ -830,14 +835,14 @@ public final class EditorBufferItem : BufferItem
         if (selectionStartOffset <= targetOffset && targetOffset < selectionEndOffset)
             return;
         
-        const oldText = Text;
+        const oldText = Text.toUtf8Slice;
         const selectedText = oldText[selectionStartOffset .. selectionEndOffset];
         
         if (targetOffset >= selectionEndOffset)
             targetOffset -= selectedText.intLength;
         
         auto newText = oldText[0 .. selectionStartOffset] ~ oldText[selectionEndOffset .. $];
-        newText = newText[0 .. targetOffset] ~ selectedText ~ newText[targetOffset .. $];
+        newText = newText.toUtf8Slice[0 .. targetOffset] ~ selectedText ~ newText.toUtf8Slice[targetOffset .. $];
         
         ResetText(newText);
         
@@ -857,21 +862,21 @@ public final class EditorBufferItem : BufferItem
         InvalidateFormatting;
     }
     
-    public void AddCharacter(const char character)
+    public void AddCharacter(const dchar character)
     {
-        auto overwiteNextCharacter = !DeleteSelection && isInsertModeOn;
+        auto overwriteNextCharacter = !DeleteSelection && isInsertModeOn;
         
-        if (cursorPositionColumn == lines[cursorPositionLine].length)
+        if (cursorPositionColumn == lines[cursorPositionLine].toUtf8Slice.length)
         {
-            lines[cursorPositionLine] ~= character;
+            lines[cursorPositionLine] ~= character.to!string;
         }
         else
         {
-            auto followingTextStart = overwiteNextCharacter ? cursorPositionColumn + 1 : cursorPositionColumn;
+            auto followingTextStart = overwriteNextCharacter ? cursorPositionColumn + 1 : cursorPositionColumn;
         
-            lines[cursorPositionLine] = lines[cursorPositionLine][0 .. cursorPositionColumn] ~ 
-                                        character ~ 
-                                        lines[cursorPositionLine][followingTextStart .. $];
+            lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn] ~ 
+                                        character.to!string ~ 
+                                        lines[cursorPositionLine].toUtf8Slice[followingTextStart .. $];
         }
         
         cursorPositionColumn++;
@@ -885,7 +890,7 @@ public final class EditorBufferItem : BufferItem
     {
         lines = newText.length == 0 ? [""] : newText.splitLines;
         cursorPositionLine   = lines.intLength - 1;
-        cursorPositionColumn = lines[cursorPositionLine].intLength;
+        cursorPositionColumn = lines[cursorPositionLine].toUtf8Slice.intLength;
         ResetSelection;
         Program.Buffer.ScrollScreenToBottom;
         InvalidateFormatting;
@@ -907,15 +912,15 @@ public final class EditorBufferItem : BufferItem
         // This is where we will want the horizontal 
         // cursor position to be after the text is copied 
         // across.  Save it for later.
-        auto lastNewLineLength = newLines[$ - 1].intLength;
+        auto lastNewLineLength = newLines[$ - 1].toUtf8Slice.intLength;
         
         // Copy the remaining text on the current line 
         // to the end of the new text.
-        newLines[$ - 1] ~= lines[cursorPositionLine][cursorPositionColumn .. $];
+        newLines[$ - 1] ~= lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn .. $];
         
         // Copy the first line of new text into the 
         // currently selected line.
-        lines[cursorPositionLine] = lines[cursorPositionLine][0 .. cursorPositionColumn] ~ 
+        lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn] ~ 
                                     newLines[0];
         
         if (newLines.length > 1)
@@ -952,12 +957,11 @@ public final class EditorBufferItem : BufferItem
         }
         else
         {
-            foreach (line; selectionStartLine .. selectionEndLine + 1)
-                lines[line] = "    " ~ lines[line];
-            
+            foreach (lineIndex; selectionStartLine .. selectionEndLine + 1)
+                lines[lineIndex] = "    " ~ lines[lineIndex];
             
             selectionStartColumn = 0;
-            selectionEndColumn   = lines[selectionEndLine].intLength;
+            selectionEndColumn   = lines[selectionEndLine].toUtf8Slice.intLength;
             cursorPositionLine   = selectionEndLine;
             cursorPositionColumn = selectionEndColumn;
             AddUndoHistoryFrame;
@@ -974,10 +978,10 @@ public final class EditorBufferItem : BufferItem
             if (newStart == cursorPositionColumn)
                 return;
             
-            if (lines[cursorPositionLine][newStart .. cursorPositionColumn].all!"a == ' '")
+            if (lines[cursorPositionLine].toUtf8Slice[newStart .. cursorPositionColumn].all!(c => c == ' '))
             {
-                lines[cursorPositionLine] = lines[cursorPositionLine][0 .. newStart] ~ 
-                                            lines[cursorPositionLine][cursorPositionColumn .. $];
+                lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. newStart] ~ 
+                                            lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn .. $];
                 
                 AddUndoHistoryFrame;
                 InvalidateFormatting;
@@ -989,12 +993,12 @@ public final class EditorBufferItem : BufferItem
         {
             foreach (line; selectionStartLine .. selectionEndLine + 1)
             {
-                immutable start = min(4, max(0, lines[line].asciiCountUntil!(a => a != ' ')));
-                lines[line] = lines[line][start .. $];
+                immutable start = min(4, max(0, lines[line].byDchar.countUntil!(a => a != ' ')));
+                lines[line] = lines[line].toUtf8Slice[start .. $];
             }
             
             selectionStartColumn = 0;
-            selectionEndColumn   = lines[selectionEndLine].intLength;
+            selectionEndColumn   = lines[selectionEndLine].toUtf8Slice.intLength;
             cursorPositionLine   = selectionEndLine;
             cursorPositionColumn = selectionEndColumn;
             AddUndoHistoryFrame;
@@ -1009,19 +1013,19 @@ public final class EditorBufferItem : BufferItem
         foreach (lineNumber; selectionStartLine .. selectionEndLine + 1)
         {
             const start = lineNumber == selectionStartLine ? selectionStartColumn : 0;
-            const end   = lineNumber == selectionEndLine   ? selectionEndColumn : lines[lineNumber].intLength;
+            const end   = lineNumber == selectionEndLine   ? selectionEndColumn : lines[lineNumber].toUtf8Slice.intLength;
             
             if (start >= end)
                 continue;
             
             static if (toUpperCase)
-                lines[lineNumber] = lines[lineNumber][0 .. start] ~ 
-                                    lines[lineNumber][start .. end].toUpper ~ 
-                                    lines[lineNumber][end .. $];
+                lines[lineNumber] = lines[lineNumber].toUtf8Slice[0 .. start] ~ 
+                                    lines[lineNumber].toUtf8Slice[start .. end].toUpper ~ 
+                                    lines[lineNumber].toUtf8Slice[end .. $];
             else
-                lines[lineNumber] = lines[lineNumber][0 .. start] ~ 
-                                    lines[lineNumber][start .. end].toLower ~ 
-                                    lines[lineNumber][end .. $];
+                lines[lineNumber] = lines[lineNumber].toUtf8Slice[0 .. start] ~ 
+                                    lines[lineNumber].toUtf8Slice[start .. end].toLower ~ 
+                                    lines[lineNumber].toUtf8Slice[end .. $];
             
             changedMade = true;
         }
@@ -1034,14 +1038,12 @@ public final class EditorBufferItem : BufferItem
         }
     }
     
-    private static bool IsIdentifierCharacter(const char c) pure @nogc nothrow
-    {
-        return c.IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.SingleWordOnly, ValidateQuote.SimpleIdentifierOnly);
-    }
+    private static bool IsIdentifierCharacter(const dchar c) pure @nogc nothrow =>
+        c.IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.SingleWordOnly, ValidateQuote.SimpleIdentifierOnly);
     
     private auto StartOfPreviousWord() const
     {
-        const text = lines[cursorPositionLine];
+        const text = lines[cursorPositionLine].toUtf8Slice;
         
         if (cursorPositionColumn == 0 || text.length == 0)
             return 0;
@@ -1050,7 +1052,7 @@ public final class EditorBufferItem : BufferItem
         
         if (text[index] == ' ')
         {
-            const startOfSpaceOffset = text[0 .. index].asciiCountReverseUntil!(c => c != ' ');
+            const startOfSpaceOffset = text[0 .. index].byDchar.retro.countUntil!(c => c != ' ');
             if (startOfSpaceOffset < 0)
                 return 0;
             
@@ -1058,8 +1060,8 @@ public final class EditorBufferItem : BufferItem
         }
         
         const offset = IsIdentifierCharacter(text[index]) ? 
-            text[0 .. index].asciiCountReverseUntil!(c => !IsIdentifierCharacter(c)) : 
-            text[0 .. index].asciiCountReverseUntil!(c => IsIdentifierCharacter(c) || c == ' ');
+            text[0 .. index].byDchar.retro.countUntil!(c => !IsIdentifierCharacter(c)) : 
+            text[0 .. index].byDchar.retro.countUntil!(c => IsIdentifierCharacter(c) || c == ' ');
         
         if (offset < 0)
             return 0;
@@ -1070,7 +1072,7 @@ public final class EditorBufferItem : BufferItem
     
     private auto StartOfNextWord() const
     {
-        const text = lines[cursorPositionLine];
+        const text = lines[cursorPositionLine].toUtf8Slice;
         
         if (cursorPositionColumn >= text.length)
             return text.intLength;
@@ -1080,8 +1082,8 @@ public final class EditorBufferItem : BufferItem
         if (text[index] != ' ')
         {
             const offset = IsIdentifierCharacter(text[index]) ? 
-                text[index .. $].asciiCountUntil!(c => !IsIdentifierCharacter(c)) : 
-                text[index .. $].asciiCountUntil!(c => IsIdentifierCharacter(c) || c == ' ');
+                text[index .. $].byDchar.countUntil!(c => !IsIdentifierCharacter(c)) : 
+                text[index .. $].byDchar.countUntil!(c => IsIdentifierCharacter(c) || c == ' ');
                 
             if (offset < 0)
                 return text.intLength;
@@ -1089,7 +1091,7 @@ public final class EditorBufferItem : BufferItem
             index += offset;
         }
         
-        const endOfSpaceOffset = text[index .. $].asciiCountUntil!(c => c != ' ');
+        const endOfSpaceOffset = text[index .. $].byDchar.countUntil!(c => c != ' ');
         if (endOfSpaceOffset < 0)
             return text.intLength;
         
@@ -1102,17 +1104,21 @@ public final class EditorBufferItem : BufferItem
         if (cursorPositionColumn == 0)
             return 0;
         
-        auto currentCharacter = lines[cursorPositionLine][cursorPositionColumn - 1];
+        auto currentCharacter = lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn - 1];
         
         int startOfWordOffset;
         if (currentCharacter.isAlphaNum || currentCharacter == '_')
             startOfWordOffset = cast(int)(
-                lines[cursorPositionLine][0 .. cursorPositionColumn]
-                .asciiCountReverseUntil!(c => !IsIdentifierCharacter(c)));
+                lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn]
+                .byDchar
+                .retro
+                .countUntil!(c => !IsIdentifierCharacter(c)));
         else
             startOfWordOffset = cast(int)(
-                lines[cursorPositionLine][0 .. cursorPositionColumn]
-                .asciiCountReverseUntil!(c => IsIdentifierCharacter(c)));
+                lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn]
+                .byDchar
+                .retro
+                .countUntil!(c => IsIdentifierCharacter(c)));
             
         if (startOfWordOffset < 0)
             return 0;
@@ -1122,7 +1128,7 @@ public final class EditorBufferItem : BufferItem
     
     private auto EndOfWord() const
     {
-        const text = lines[cursorPositionLine][cursorPositionColumn .. $];
+        const text = lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn .. $].toUtf8Slice;
         
         if (text.length == 0)
             return cursorPositionColumn;
@@ -1132,16 +1138,26 @@ public final class EditorBufferItem : BufferItem
         int endOfWordOffset;
         
         if (IsIdentifierCharacter(character))
-            endOfWordOffset = cast(int)text.asciiCountUntil!(c => !IsIdentifierCharacter(c));
+            endOfWordOffset = cast(int)text.content.byDchar.countUntil!(c => !IsIdentifierCharacter(c));
         else if (character == ' ')
-            endOfWordOffset = cast(int)text.asciiCountUntil!(c => c != ' ');
+            endOfWordOffset = cast(int)text.content.byDchar.countUntil!(c => c != ' ');
         else 
-            endOfWordOffset = cast(int)text.asciiCountUntil!(c => IsIdentifierCharacter(c));
+            endOfWordOffset = cast(int)text.content.byDchar.countUntil!(c => IsIdentifierCharacter(c));
         
         if (endOfWordOffset < 0)
-            return lines[cursorPositionLine].intLength;
+            return lines[cursorPositionLine].toUtf8Slice.intLength;
         else
             return cursorPositionColumn + endOfWordOffset;
+    }
+    
+    public void MoveCursorColumnTo(Flag!"resetSelection" resetSelection = Yes.resetSelection)(const int column) @nogc nothrow
+    {   
+        Program.Screen.Invalidate;
+        InvalidateFormatting;
+        cursorPositionColumn = min(max(0, column), lines[cursorPositionLine].toUtf8Slice.intLength);
+        
+        static if (resetSelection)
+            ResetSelection;
     }
     
     public void MoveCursorTo(Flag!"resetSelection" resetSelection = Yes.resetSelection)(const int line, const int column) @nogc nothrow
@@ -1151,59 +1167,15 @@ public final class EditorBufferItem : BufferItem
         MoveCursorColumnTo!resetSelection(column);
     }
     
-    public void MoveCursorColumnTo(Flag!"resetSelection" resetSelection = Yes.resetSelection)(const int column) @nogc nothrow
-    {   
-        Program.Screen.Invalidate;
-        InvalidateFormatting;
-        cursorPositionColumn = min(max(0, column), lines[cursorPositionLine].intLength);
-        
-        static if (resetSelection)
-            ResetSelection;
-    }
-    
     public void MoveCursorToOffset(const int offset) @nogc nothrow
     {
         auto location = GetLocationFromOffset(offset);
         MoveCursorTo(location.line, location.column);
-        // 
-        // foreach (lineNumber, line; lines)
-        // {
-        //     if (offset < line.length)
-        //     {
-        //         MoveCursorTo(lineNumber, offset);
-        //         return;
-        //     }
-        //     
-        //     offset -= line.intLength;
-        //     offset -= lineEnding.intLength;
-        // }
-        // 
-        // MoveCursorToBottom;
-    }
-    
-    public void MoveCursorLeft() @nogc nothrow
-    {
-        MoveCursorColumnTo(cursorPositionColumn - 1);
-    }
-    
-    public void MoveCursorRight() @nogc nothrow
-    {
-        MoveCursorColumnTo(cursorPositionColumn + 1);
-    }
-    
-    public void MoveCursorUp() @nogc nothrow
-    {
-        MoveCursorTo(cursorPositionLine - 1, cursorPositionColumn);
-    }
-    
-    public void MoveCursorDown() @nogc nothrow
-    {
-        MoveCursorTo(cursorPositionLine + 1, cursorPositionColumn);
     }
     
     public void MoveCursorToLineStart() @nogc
     {
-        immutable textStart = cast(int)lines[cursorPositionLine].asciiCountUntil!(c => c != ' ');
+        immutable textStart = cast(int)lines[cursorPositionLine].byDchar.countUntil!(c => c != ' ');
         
         if (cursorPositionColumn == textStart)
             MoveCursorColumnTo(0);
@@ -1211,30 +1183,32 @@ public final class EditorBufferItem : BufferItem
             MoveCursorColumnTo(textStart);
     }
     
-    public void MoveCursorToLineEnd() @nogc nothrow
-    {
-        MoveCursorColumnTo(lines[cursorPositionLine].intLength);
-    }
+    public void MoveCursorLeft() @nogc nothrow =>
+        MoveCursorColumnTo(cursorPositionColumn - 1);
     
-    public void MoveCursorToWordLeft()
-    {
+    public void MoveCursorRight() @nogc nothrow =>
+        MoveCursorColumnTo(cursorPositionColumn + 1);
+    
+    public void MoveCursorUp() @nogc nothrow =>
+        MoveCursorTo(cursorPositionLine - 1, cursorPositionColumn);
+    
+    public void MoveCursorDown() @nogc nothrow =>
+        MoveCursorTo(cursorPositionLine + 1, cursorPositionColumn);
+    
+    public void MoveCursorToLineEnd() @nogc nothrow =>
+        MoveCursorColumnTo(lines[cursorPositionLine].toUtf8Slice.intLength);
+    
+    public void MoveCursorToWordLeft() =>
         MoveCursorColumnTo(StartOfPreviousWord);
-    }
     
-    public void MoveCursorToWordRight()
-    {
+    public void MoveCursorToWordRight() =>
         MoveCursorColumnTo(StartOfNextWord);
-    }
     
-    public void MoveCursorToTop() @nogc nothrow
-    {
+    public void MoveCursorToTop() @nogc nothrow =>
         MoveCursorTo(0, 0);
-    }
     
-    public void MoveCursorToBottom() @nogc nothrow
-    {
-        MoveCursorTo(lines.intLength - 1, lines[$ - 1].intLength);
-    }
+    public void MoveCursorToBottom() @nogc nothrow =>
+        MoveCursorTo(lines.intLength - 1, lines[$ - 1].toUtf8Slice.intLength);
     
     private void DeleteLine(int line)
     {
@@ -1253,8 +1227,8 @@ public final class EditorBufferItem : BufferItem
         
         if (cursorPositionColumn > 0)
         {
-            lines[cursorPositionLine] = lines[cursorPositionLine][0 .. cursorPositionColumn - 1] ~ 
-                                        lines[cursorPositionLine][cursorPositionColumn .. $];
+            lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn - 1] ~ 
+                                        lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn .. $];
             MoveCursorLeft;
             AddUndoHistoryFrame;
             RecalculateWidth;
@@ -1266,7 +1240,7 @@ public final class EditorBufferItem : BufferItem
             return;
         
         cursorPositionLine--;
-        auto newCursorPositionColumn = lines[cursorPositionLine].intLength;
+        auto newCursorPositionColumn = lines[cursorPositionLine].toUtf8Slice.intLength;
         
         lines[cursorPositionLine] = lines[cursorPositionLine] ~ 
                                     lines[cursorPositionLine + 1];
@@ -1284,10 +1258,10 @@ public final class EditorBufferItem : BufferItem
         if (DeleteSelection)
             return;
         
-        if (cursorPositionColumn < lines[cursorPositionLine].length)
+        if (cursorPositionColumn < lines[cursorPositionLine].toUtf8Slice.length)
         {
-            lines[cursorPositionLine] = lines[cursorPositionLine][0 .. cursorPositionColumn] ~ 
-                                        lines[cursorPositionLine][cursorPositionColumn + 1.. $];
+            lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn] ~ 
+                                        lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn + 1.. $];
             AddUndoHistoryFrame;
             RecalculateWidth;
             InvalidateFormatting;
@@ -1319,8 +1293,8 @@ public final class EditorBufferItem : BufferItem
         
         auto startOfWord = StartOfPreviousWord;
         
-        lines[cursorPositionLine] = lines[cursorPositionLine][0 .. startOfWord] ~ 
-                                    lines[cursorPositionLine][cursorPositionColumn .. $];
+        lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. startOfWord] ~ 
+                                    lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn .. $];
         
         MoveCursorColumnTo(startOfWord);
         AddUndoHistoryFrame;
@@ -1333,14 +1307,14 @@ public final class EditorBufferItem : BufferItem
         if (DeleteSelection)
             return;
         
-        if (cursorPositionColumn == lines[cursorPositionLine].length)
+        if (cursorPositionColumn == lines[cursorPositionLine].toUtf8Slice.length)
         {
             DeleteCharacterRight;
             return;
         }
         
-        lines[cursorPositionLine] = lines[cursorPositionLine][0 .. cursorPositionColumn] ~ 
-                                    lines[cursorPositionLine][EndOfWord .. $];
+        lines[cursorPositionLine] = lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn] ~ 
+                                    lines[cursorPositionLine].toUtf8Slice[EndOfWord .. $];
         AddUndoHistoryFrame;
         RecalculateWidth;
         InvalidateFormatting;
@@ -1372,7 +1346,8 @@ public final class EditorBufferItem : BufferItem
         return true;
     }
     
-    public bool IsInFindMode() const @nogc nothrow { return acceptPrompt !is null && acceptPrompt.Content == AcceptPrompt.ContentType.Find; }
+    public bool IsInFindMode() const @nogc nothrow =>
+        acceptPrompt !is null && acceptPrompt.Content == AcceptPrompt.ContentType.Find;
     
     public string CurrentFindText() const nothrow
     {
@@ -1427,7 +1402,6 @@ public final class EditorBufferItem : BufferItem
                     Program.Buffer.AddText(textWithHeader);
                 }
         }
-        
         
         // The user may be using SQL*Plus line editing numerals.  Try to 
         // support this, but not if commands are in progress.  It's possible 
@@ -1519,7 +1493,6 @@ public final class EditorBufferItem : BufferItem
             printLines(lastCommandLines, firstLine, lastLine);
             return;
         }
-        
         
         // In SQL*Plus the "EDIT" command would open Notepad.exe, be we already have a better 
         // editor here.  Unfortunately Interpreter cannot just call PreviousCommandInHistory 
@@ -1624,7 +1597,7 @@ public final class EditorBufferItem : BufferItem
             !isShiftKeyDown && 
             text.length >= lineEnding.length && text[$ - lineEnding.length .. $] == lineEnding &&
             cursorPositionLine == lines.length - 1 && 
-            cursorPositionColumn == lines[cursorPositionLine].length)
+            cursorPositionColumn == lines[cursorPositionLine].toUtf8Slice.length)
         {
             currentCommandHistory.AddCommand!(CommandHistory.CurrentLocation.MoveToEnd)(Text);
             Clear;
@@ -1637,9 +1610,9 @@ public final class EditorBufferItem : BufferItem
         {
             auto startColumn = lineNumber == cursorPositionLine ? cursorPositionColumn : 0;
             
-            for (auto column = startColumn; column < lines[lineNumber].length; column++)
+            for (auto column = startColumn; column < lines[lineNumber].toUtf8Slice.length; column++)
             {
-                if (!isWhite(lines[lineNumber][column]))
+                if (!isWhite(lines[lineNumber].toUtf8Slice[column]))
                 {
                     isLaterText = true;
                     break laterTextCheckLoop;
@@ -1673,14 +1646,14 @@ public final class EditorBufferItem : BufferItem
         
         immutable newLineIndentation = 
             ' '.repeat(
-            (lines[cursorPositionLine][0 .. cursorPositionColumn].asciiCountUntil!(c => c != ' ') / 4) * 4)            
+            (lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn].byDchar.countUntil!(c => c != ' ') / 4) * 4)            
             .to!string;
         
-        lines = lines[0 .. cursorPositionLine] ~                              // Any previous lines
-                lines[cursorPositionLine][0 .. cursorPositionColumn] ~        // First half of this line
-                (newLineIndentation ~                                         // New Line Indentation
-                    lines[cursorPositionLine][cursorPositionColumn .. $]) ~   // Second half of this line
-                lines[min($, cursorPositionLine + 1) .. $];                   // Any following lines            
+        lines = lines[0 .. cursorPositionLine] ~                                          // Any previous lines
+                lines[cursorPositionLine].toUtf8Slice[0 .. cursorPositionColumn] ~        // First half of this line
+                (newLineIndentation ~                                                     // New Line Indentation
+                    lines[cursorPositionLine].toUtf8Slice[cursorPositionColumn .. $]) ~   // Second half of this line
+                lines[min($, cursorPositionLine + 1) .. $];                               // Any following lines            
         
         MoveCursorTo(cursorPositionLine + 1, newLineIndentation.intLength);
     }
@@ -1690,7 +1663,7 @@ public final class EditorBufferItem : BufferItem
         selectionStartLine = 0;
         selectionStartColumn = 0;
         selectionEndLine = lines.intLength - 1;
-        selectionEndColumn = lines[selectionEndLine].intLength;
+        selectionEndColumn = lines[selectionEndLine].toUtf8Slice.intLength;
         cursorPositionLine = selectionEndLine;
         cursorPositionColumn = selectionEndColumn;
         InvalidateFormatting;
@@ -1721,12 +1694,12 @@ public final class EditorBufferItem : BufferItem
         const int cursorLine, 
         const int cursorColumn) @nogc nothrow
     {
-        auto newSelectionStartLine   = max(0, min(lines.intLength - 1,                    startLine));
-        auto newSelectionStartColumn = max(0, min(lines[newSelectionStartLine].intLength, startColumn));
-        auto newSelectionEndLine     = max(0, min(lines.intLength - 1,                    endLine));
-        auto newSelectionEndColumn   = max(0, min(lines[newSelectionEndLine].intLength,   endColumn));
-        auto newCursorPositionLine   = max(0, min(lines.intLength - 1,                    cursorLine));
-        auto newCursorPositionColumn = max(0, min(lines[newCursorPositionLine].intLength, cursorColumn));
+        auto newSelectionStartLine   = max(0, min(lines.intLength - 1,                                startLine));
+        auto newSelectionStartColumn = max(0, min(lines[newSelectionStartLine].toUtf8Slice.intLength, startColumn));
+        auto newSelectionEndLine     = max(0, min(lines.intLength - 1,                                endLine));
+        auto newSelectionEndColumn   = max(0, min(lines[newSelectionEndLine].toUtf8Slice.intLength,   endColumn));
+        auto newCursorPositionLine   = max(0, min(lines.intLength - 1,                                cursorLine));
+        auto newCursorPositionColumn = max(0, min(lines[newCursorPositionLine].toUtf8Slice.intLength, cursorColumn));
         
         if (selectionStartLine   == newSelectionStartLine && 
             selectionStartColumn == newSelectionStartColumn && 

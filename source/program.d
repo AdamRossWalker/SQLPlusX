@@ -11,19 +11,19 @@ module program; //                                                        ____  
 
 enum staticSDL = true;
 import std.algorithm : max, min, startsWith, canFind;
-import std.ascii : isLower;
 import std.conv : to;
 import std.format : format;
 import std.functional : toDelegate;
 import std.string : splitLines, strip, toUpper, toLower;
 import std.sumtype : match;
 import std.typecons : Flag, Yes, No, Tuple, Nullable;
+import std.utf : byDchar;
 
 import core.runtime;
 import core.sys.windows.windows;
 import core.sys.windows.winuser;
 
-import derelict.sdl2.sdl;
+import bindbc.sdl;
 
 public import common;
 public import errors;
@@ -45,28 +45,28 @@ debug public import screen : DebugText;
 public abstract final class Program
 {
     private static interpreter.Settings _settings;
-    public static Settings() @nogc nothrow { return _settings; }
+    public static Settings() @nogc nothrow => _settings;
     
     private static database.DatabaseManager _database;
-    public static Database() @nogc nothrow { return _database; }
+    public static Database() @nogc nothrow => _database;
     
     private static autocomplete.AutoCompleteManager _autoCompleteDatabase;
-    public static AutoCompleteDatabase() @nogc nothrow { return _autoCompleteDatabase; }
+    public static AutoCompleteDatabase() @nogc nothrow => _autoCompleteDatabase;
     
     private static interpreter.Interpreter _interpreter;
-    public static Interpreter() @nogc nothrow { return _interpreter; }
+    public static Interpreter() @nogc nothrow => _interpreter;
     
     private static editor.EditorBufferItem _editor;
-    public static Editor() @nogc nothrow { return _editor; }
+    public static Editor() @nogc nothrow => _editor;
     
     private static buffer.Buffer _buffer;
-    public static Buffer() @nogc nothrow { return _buffer; }
+    public static Buffer() @nogc nothrow => _buffer;
     
     private static screen.Screen _screen;
-    public static Screen() @nogc nothrow { return _screen; }
+    public static Screen() @nogc nothrow => _screen;
     
     private static syntax.Syntax _syntax;
-    public static Syntax() @nogc nothrow { return _syntax; }
+    public static Syntax() @nogc nothrow => _syntax;
     
     private static auto isRunning = true;
     public static void Exit() @nogc nothrow { isRunning = false; }
@@ -159,6 +159,454 @@ public abstract final class Program
         );
     }
     
+    private static void processInput(dchar character, Action action)
+    {
+        enum searchMode { None, Forward, Backward }
+        
+        void activateEditor(searchMode searching = searchMode.None)()
+        {
+            Program.Screen.Invalidate;
+            
+            if (Program.Editor.CurrentFindText.length > 0)
+            {
+                Program.Buffer.SelectionType = Buffer.SelectionTypes.EditorAndBuffer;
+                
+                static if (searching == searchMode.Forward)
+                    Program.Buffer.FindNext;
+                else static if (searching == searchMode.Backward)
+                    Program.Buffer.FindPrevious;
+            }
+            else
+            {
+                Program.Buffer.SelectionType = Buffer.SelectionTypes.EditorOnly;
+                Program.Buffer.ScrollScreenToBottom;
+            }
+        }
+        
+        final switch (action)
+        {
+            case Action.Nothing:
+                break;
+            
+            case Action.Cancel:
+                if (Program.AutoCompleteDatabase.HideSuggestionPopup)
+                    break;
+                
+                if (Program.Editor.CurrentFindText.length > 0)
+                {
+                    Program.Editor.Clear;
+                    Program.Editor.ClearAcceptPrompt;
+                    break;
+                }
+                
+                if (Program.Editor.Text.length > 0)
+                {
+                    Program.Editor.Clear;
+                    break;
+                }
+                
+                if (Program.Interpreter.ClearAcceptPrompt)
+                    break;
+                
+                Program.Interpreter.Cancel;
+                
+                break;
+                
+            case Action.MoveScreenUp:
+                Program.Buffer.ScrollScreenVerticallyBy(-1);
+                break;
+                
+            case Action.MoveScreenDown:
+                Program.Buffer.ScrollScreenVerticallyBy(1);
+                break;
+                
+            case Action.MoveScreenLeft:
+                if (!Program.Screen.queuedCommands.moveHorizontallyBy(-1) && 
+                    !Program.Screen.rollover.moveHorizontallyBy(-1))
+                    Program.Buffer.ScrollScreenHorizontallyBy(-1);
+                break;
+                
+            case Action.MoveScreenRight:
+                if (!Program.Screen.queuedCommands.moveHorizontallyBy(1) && 
+                    !Program.Screen.rollover.moveHorizontallyBy(1))
+                    Program.Buffer.ScrollScreenHorizontallyBy(1);
+                break;
+                
+            case Action.MoveCursorUp:
+                if (!Program.Screen.queuedCommands.moveVerticallyBy(-1) && 
+                    !Program.Screen.rollover.moveVerticallyBy(-1))
+                {
+                    if (Program.Screen.isEditorVisible)
+                    {
+                        Program.Editor.MoveCursorUp;
+                        Program.Buffer.ScrollScreenToBottom;
+                    }
+                    else
+                        Program.Buffer.ScrollScreenVerticallyBy(-1);
+                }
+                break;
+                
+            case Action.MoveCursorDown:
+                if (!Program.Screen.queuedCommands.moveVerticallyBy(1) && 
+                    !Program.Screen.rollover.moveVerticallyBy(1))
+                {
+                    if (Program.Screen.isEditorVisible)
+                    {
+                        Program.Editor.MoveCursorDown;
+                        Program.Buffer.ScrollScreenToBottom;
+                    }
+                    else
+                        Program.Buffer.ScrollScreenVerticallyBy(1);
+                }
+                break;
+                
+            case Action.MoveCursorLeft:
+                if (!Program.Screen.queuedCommands.moveHorizontallyBy(-1) && 
+                    !Program.Screen.rollover.moveHorizontallyBy(-1))
+                {
+                    if (Program.Screen.isEditorVisible)
+                    {
+                        Program.Editor.MoveCursorLeft;
+                        Program.Buffer.ScrollScreenToBottom;
+                    }
+                    else
+                        Program.Buffer.ScrollScreenHorizontallyBy(-1);
+                }
+                break;
+                
+            case Action.MoveCursorRight:
+                if (!Program.Screen.queuedCommands.moveHorizontallyBy(1) && 
+                    !Program.Screen.rollover.moveHorizontallyBy(1))
+                {
+                    if (Program.Screen.isEditorVisible)
+                    {
+                        Program.Editor.MoveCursorRight;
+                        Program.Buffer.ScrollScreenToBottom;
+                    }
+                    else
+                        Program.Buffer.ScrollScreenHorizontallyBy(1);
+                }
+                break;
+                
+            case Action.MoveToTop:
+                if (Program.Buffer.SelectionType == Program.Buffer.SelectionTypes.EditorOnly)
+                    Program.Editor.MoveCursorToTop;
+                else
+                    Program.Buffer.ScrollScreenToTop;
+                break;
+                
+            case Action.MoveToBottom:
+                Program.Buffer.ScrollScreenToBottom;
+                Program.Editor.MoveCursorToBottom;
+                break;
+            
+            case Action.MoveCursorToLineStart:
+                Program.Editor.MoveCursorToLineStart;
+                Program.Buffer.ScrollScreenToBottom;
+                break;
+            
+            case Action.MoveCursorToLineEnd:
+                Program.Editor.MoveCursorToLineEnd;
+                Program.Buffer.ScrollScreenToBottom;
+                break;
+            
+            case Action.MoveToWordLeft:
+                Program.Editor.MoveCursorToWordLeft;
+                Program.Buffer.ScrollScreenToBottom;
+                break;
+            
+            case Action.MoveToWordRight:
+                Program.Editor.MoveCursorToWordRight;
+                Program.Buffer.ScrollScreenToBottom;
+                break;
+            
+            case Action.PageUp:
+                
+                if (!Program.Screen.queuedCommands.moveUpByOnePage && 
+                    !Program.Screen.rollover.moveUpByOnePage && 
+                    !Program.AutoCompleteDatabase.MoveSuggestionPageUp)
+                    Program.Buffer.ScrollScreenUpByOnePage;
+                
+                break;
+            
+            case Action.PageDown:
+                
+                if (!Program.Screen.queuedCommands.moveDownByOnePage && 
+                    !Program.Screen.rollover.moveDownByOnePage && 
+                    !Program.AutoCompleteDatabase.MoveSuggestionPageDown)
+                    Program.Buffer.ScrollScreenDownByOnePage;
+                
+                break;
+            
+            case Action.SelectAll:
+                Program.Editor.SelectAll;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionUp:
+                Program.Editor.ExtendSelectionUp;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionDown:
+                Program.Editor.ExtendSelectionDown;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionLeft:
+                Program.Editor.ExtendSelectionLeft;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionRight:
+                Program.Editor.ExtendSelectionRight;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionPageUp:
+                break;
+            
+            case Action.ExtendSelectionPageDown:
+                break;
+            
+            case Action.ExtendSelectionToLineStart:
+                Program.Editor.ExtendSelectionToLineStart;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionToLineEnd:
+                Program.Editor.ExtendSelectionToLineEnd;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionToTop:
+                Program.Editor.ExtendSelectionToTop;
+                break;
+            
+            case Action.ExtendSelectionToBottom:
+                Program.Editor.ExtendSelectionToBottom;
+                break;
+            
+            case Action.ExtendSelectionToWordLeft:
+                Program.Editor.ExtendSelectionToWordLeft;
+                activateEditor;
+                break;
+            
+            case Action.ExtendSelectionToWordRight:
+                Program.Editor.ExtendSelectionToWordRight;
+                activateEditor;
+                break;
+            
+            case Action.DeleteCharacterLeft:
+                Program.Editor.DeleteCharacterLeft;
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.DeleteCharacterRight:
+                Program.Editor.DeleteCharacterRight;
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.DeleteWordLeft:
+                Program.Editor.DeleteWordLeft;
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.DeleteWordRight:
+                Program.Editor.DeleteWordRight;
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.ClearScreen:
+                
+                if (!Program.Editor.HasAcceptPrompt)
+                    Program.Interpreter.SetAcceptPrompt(new AcceptPrompt("clear_screen", "Clear screen (Y):", AcceptPrompt.ContentType.ClearScreen));
+                break;
+            
+            case Action.TypeText:
+                
+                // I wanted to commit on space or return, but this actually requires a deep understanding of whether 
+                // and identifier makes sense here because it's annoying if the user actually wants a space.
+                // 
+                // if ((character != ' ' && character != '\r' && character != '\n') || !Program.AutoCompleteDatabase.CompleteSuggestion)
+                if ((character != '\r' && character != '\n') || !Program.AutoCompleteDatabase.CompleteSuggestion)
+                    Program.Editor.AddCharacter(character);
+                
+                activateEditor!(searchMode.Forward);
+                break;
+                
+            case Action.Tab:
+                
+                if (!Program.AutoCompleteDatabase.CompleteSuggestion)
+                    Program.Editor.Tab;
+                
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.BackTab:
+                Program.Editor.BackTab;
+                activateEditor;
+                break;
+            
+            case Action.Return:
+                //if (!Program.AutoCompleteDatabase.CompleteSuggestion)
+                    Program.Editor.Return(true, false);
+                
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.ShiftReturn:
+                Program.Editor.Return(true, true);
+                activateEditor!(searchMode.Backward);
+                break;
+            
+            case Action.ConvertToUpperCase:
+                Program.Editor.ConvertCase!(Yes.toUpperCase);
+                break;
+            
+            case Action.ConvertToLowerCase:
+                Program.Editor.ConvertCase!(No.toUpperCase);
+                break;
+            
+            case Action.Cut:
+                auto selectedText = Program.Editor.SelectedText;
+                if (selectedText.length > 0)
+                    SDL_SetClipboardText(selectedText.ToCString).CheckSDLError;
+                
+                Program.Editor.DeleteSelection;
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.CopyOrBreak:
+                auto selectedText = Program.Buffer.SelectedText;
+                if (selectedText.length == 0)
+                    Program.Interpreter.ControlCBreak;
+                else
+                    SDL_SetClipboardText(selectedText.ToCString).CheckSDLError;
+                
+                break;
+            
+            case Action.FullCopy:
+                auto text = Program.Buffer.CopyWholeItems;
+                if (text.length > 0)
+                    SDL_SetClipboardText(text.ToCString).CheckSDLError;
+                
+                break;
+            
+            case Action.CopyField:
+                auto text = Program.Buffer.CopyField;
+                if (text.length > 0)
+                    SDL_SetClipboardText(text.ToCString).CheckSDLError;
+                
+                break;
+            
+            case Action.Paste:
+                auto clipboardText = SDL_GetClipboardText();
+                if (clipboardText is null)
+                    CheckSDLError;
+                else
+                    Program.Editor.AddText(clipboardText.FromCString);
+                
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.Save:
+                break;
+            
+            case Action.FindNext:
+                Program.Editor.EnableFindPrompt(Program.Buffer.SelectedText);
+                activateEditor!(searchMode.Forward);
+                break;
+            
+            case Action.FindPrevious:
+                Program.Editor.EnableFindPrompt(Program.Buffer.SelectedText);
+                activateEditor!(searchMode.Backward);
+                break;
+            
+            case Action.Undo:
+                Program.Editor.Undo;
+                break;
+            
+            case Action.Redo:
+                Program.Editor.Redo;
+                break;
+            
+            case Action.ToggleInsertMode:
+                Program.Editor.ToggleInsertMode;
+                break;
+            
+            case Action.HistoryPrevious:
+                Program.Editor.PreviousCommandInHistory;
+                break;
+            
+            case Action.HistoryNext:
+                Program.Editor.NextCommandInHistory;
+                break;
+            
+            case Action.ZoomIn:
+                Program.Screen.AdjustFontSizeBy(1);
+                break;
+            
+            case Action.ZoomOut:
+                Program.Screen.AdjustFontSizeBy(-1);
+                break;
+            
+            case Action.ToggleFullScreen:
+                Program.Screen.ToggleFullScreen;
+                break;
+            
+            case Action.ShowAutoComplete:
+                Program.AutoCompleteDatabase.ShowSuggestionPopup;
+                break;
+            
+            case Action.MoveAutoCompleteSuggestionUp:
+                Program.AutoCompleteDatabase.MoveSuggestionUp;
+                break;
+            
+            case Action.MoveAutoCompleteSuggestionDown:
+                Program.AutoCompleteDatabase.MoveSuggestionDown;
+                break;
+            
+            case Action.F1: break;
+            case Action.F2: break;
+            case Action.F4: break;
+            case Action.F5: break;
+            case Action.F6: break;
+            case Action.F7: 
+                debug
+                {
+                    Program.AutoCompleteDatabase.UpdateSuggestions;
+                    
+                    foreach (suggestion; Program.AutoCompleteDatabase.tableSchemasAndSimpleNames.Items)
+                        Buffer.AddText(suggestion);
+                }
+                break;
+            
+            case Action.F8: 
+                // debug throw new NonRecoverableException("Test Exception");
+                break;
+                
+            case Action.F9:
+                debug
+                {
+                    import autocomplete;
+                    auto a = new AutoCompleteManager;
+                    a.Attempt(Program.Editor.Text);
+                }
+                break;
+                
+            case Action.F10:
+                break;
+            
+            case Action.F11:
+                debug Buffer.AddTestData;
+                break;
+            
+            case Action.F12:
+                break;
+        }
+    }
+    
     public static auto Start(string commandLine)
     {
         Runtime.initialize();
@@ -189,15 +637,6 @@ public abstract final class Program
                 DatabaseManager.GlobalFinalisation;
             }
             
-            version (Windows)
-            {
-                char[KL_NAMELENGTH] keyboardLayoutCodeZ;
-                GetKeyboardLayoutNameA(keyboardLayoutCodeZ.ptr);
-                auto keyboardLayoutCode = keyboardLayoutCodeZ.ptr.FromCString;
-            }
-            else
-                auto keyboardLayoutCode = "00020409"; // "United States-International"
-            
             Screen.Update(0, 0);
             Buffer.AddText("\n\n\n\n\n\n");
             Buffer.ScrollScreenToBottom;
@@ -208,13 +647,13 @@ public abstract final class Program
             auto commandLineScripts = new string[0];
             
             auto loginScriptPath1 = Commands.FindFile("Login.sql");
-            if (loginScriptPath1 !is null)
+            if (loginScriptPath1 != "")
                 commandLineScripts ~= "@\"" ~ loginScriptPath1 ~ '\"';
             
             // Use a second login file for SQLPlusX if it exists.  This is 
             // so SQLPlusX commands can be placed here and won't fail old SQL*Plus.
             auto loginScriptPath2 = Commands.FindFile("SQLPlusXLogin.sql");
-            if (loginScriptPath2 !is null)
+            if (loginScriptPath2 != "")
                 commandLineScripts ~= "@\"" ~ loginScriptPath2 ~ '\"';
             
             foreach (parameterIndex, parameter; parameters)
@@ -251,6 +690,9 @@ public abstract final class Program
             auto isRightShiftKeyDown   = false;
             auto isLeftAltKeyDown      = false;
             auto isRightAltKeyDown     = false;
+            auto isControlKeyDown      = false;       
+            auto isShiftKeyDown        = false;       
+            auto isAltKeyDown          = false;       
             
             auto mouseButtonHeldDown = 0;
             auto mouseButtonHeldDownNextClickTime = 0;
@@ -265,6 +707,8 @@ public abstract final class Program
             
             enum targetChecksPerSecond = 30;
             enum targetMillisecondsPerCheck = 1000 / targetChecksPerSecond;
+            
+            SDL_StartTextInput;
             
             auto frameStartTime = SDL_GetTicks();
             MainLoop: while (isRunning)
@@ -294,9 +738,9 @@ public abstract final class Program
                     auto mouseY = 0;
                     auto mouseButtonState = SDL_GetMouseState(&mouseX, &mouseY);
                     
-                    enum leftMouseButtonMask = SDL_BUTTON(SDL_BUTTON_LEFT);
-                    // enum middleMouseButtonMask = SDL_BUTTON(SDL_BUTTON_MIDDLE);
-                    // enum rightMouseButtonMask  = SDL_BUTTON(SDL_BUTTON_RIGHT);
+                    enum leftMouseButtonMask = SDL_BUTTON!SDL_BUTTON_LEFT;
+                    // enum middleMouseButtonMask = SDL_BUTTON!SDL_BUTTON_MIDDLE;
+                    // enum rightMouseButtonMask  = SDL_BUTTON!SDL_BUTTON_RIGHT;
                     
                     auto hasReceivedUserInput = oldMouseX != mouseX || oldMouseY != mouseY;
                     oldMouseX = mouseX;
@@ -403,7 +847,7 @@ public abstract final class Program
                                 auto wheelEvent = event.wheel;
                                 auto coefficient = wheelEvent.direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1;
                                 
-                                if (isLeftControlKeyDown || isRightControlKeyDown)
+                                if (isControlKeyDown)
                                     Program.Screen.AdjustFontSizeBy(wheelEvent.y * coefficient);
                                 else
                                 {
@@ -427,20 +871,19 @@ public abstract final class Program
                                 
                                 continue;
                                 
-                            case SDL_KEYUP:
+                            case SDL_TEXTINPUT:
                                 hasReceivedUserInput = true;
-                                switch (event.key.keysym.sym)
+                                
+                                foreach (character; event.edit.text.ptr.FromCString.byDchar)
                                 {
-                                    case SDLK_LCTRL:  isLeftControlKeyDown  = false; continue;
-                                    case SDLK_RCTRL:  isRightControlKeyDown = false; continue;
-                                    case SDLK_LSHIFT: isLeftShiftKeyDown    = false; continue;
-                                    case SDLK_RSHIFT: isRightShiftKeyDown   = false; continue;
-                                    case SDLK_LALT:   isLeftAltKeyDown      = false; continue;
-                                    case SDLK_RALT:   isRightAltKeyDown     = false; continue;
-                                 // case SDLK_LGUI:
-                                 // case SDLK_RGUI:
-                                    default: continue;
+                                    if (Program.Editor.CheckPressAnyKey)
+                                        continue;
+                                    
+                                    processInput(character, Action.TypeText); 
                                 }
+                                
+                                Program.Screen.Invalidate;
+                                break;
                                 
                             case SDL_KEYDOWN:
                                 hasReceivedUserInput = true;
@@ -448,474 +891,35 @@ public abstract final class Program
                                 
                                 switch (key)
                                 {
-                                    case SDLK_LCTRL:        isLeftControlKeyDown  = true; continue;
-                                    case SDLK_RCTRL:        isRightControlKeyDown = true; continue;
-                                    case SDLK_LSHIFT:       isLeftShiftKeyDown    = true; continue;
-                                    case SDLK_RSHIFT:       isRightShiftKeyDown   = true; continue;
-                                    case SDLK_LALT:         isLeftAltKeyDown      = true; continue;
-                                    case SDLK_RALT:         isRightAltKeyDown     = true; continue;
-                                  //case SDLK_LGUI:
-                                  //case SDLK_RGUI:
+                                    case SDLK_LCTRL:  isLeftControlKeyDown  = true; isControlKeyDown = true; continue;
+                                    case SDLK_RCTRL:  isRightControlKeyDown = true; isControlKeyDown = true; continue;
+                                    case SDLK_LSHIFT: isLeftShiftKeyDown    = true; isShiftKeyDown   = true; continue;
+                                    case SDLK_RSHIFT: isRightShiftKeyDown   = true; isShiftKeyDown   = true; continue;
+                                    case SDLK_LALT:   isLeftAltKeyDown      = true; isAltKeyDown     = true; continue;
+                                    case SDLK_RALT:   isRightAltKeyDown     = true; isAltKeyDown     = true; continue;
                                     default: break;
                                 }
                                 
                                 if (Program.Editor.CheckPressAnyKey)
                                     continue;
                                 
-                                enum searchMode { None, Forward, Backward }
-                                
-                                void activateEditor(searchMode searching = searchMode.None)()
-                                {
-                                    Program.Screen.Invalidate;
-                                    
-                                    if (Program.Editor.CurrentFindText.length > 0)
-                                    {
-                                        Program.Buffer.SelectionType = Buffer.SelectionTypes.EditorAndBuffer;
-                                        
-                                        static if (searching == searchMode.Forward)
-                                            Program.Buffer.FindNext;
-                                        else static if (searching == searchMode.Backward)
-                                            Program.Buffer.FindPrevious;
-                                    }
-                                    else
-                                    {
-                                        Program.Buffer.SelectionType = Buffer.SelectionTypes.EditorOnly;
-                                        Program.Buffer.ScrollScreenToBottom;
-                                    }
-                                }
-                                
-                                char character;
-                                final switch (ParseKey(
-                                    key, 
-                                    isLeftControlKeyDown || isRightControlKeyDown, 
-                                    isLeftShiftKeyDown   || isRightShiftKeyDown, 
-                                    isLeftAltKeyDown     || isRightAltKeyDown, 
-                                    keyboardLayoutCode,
-                                    character))
-                                {
-                                    case Action.Nothing:
-                                        break;
-                                    
-                                    case Action.Cancel:
-                                        if (Program.AutoCompleteDatabase.HideSuggestionPopup)
-                                            break;
-                                        
-                                        if (Program.Editor.CurrentFindText.length > 0)
-                                        {
-                                            Program.Editor.Clear;
-                                            Program.Editor.ClearAcceptPrompt;
-                                            break;
-                                        }
-                                        
-                                        if (Program.Editor.Text.length > 0)
-                                        {
-                                            Program.Editor.Clear;
-                                            break;
-                                        }
-                                        
-                                        if (Program.Interpreter.ClearAcceptPrompt)
-                                            break;
-                                        
-                                        Program.Interpreter.Cancel;
-                                        
-                                        break;
-                                        
-                                    case Action.MoveScreenUp:
-                                        Program.Buffer.ScrollScreenVerticallyBy(-1);
-                                        break;
-                                        
-                                    case Action.MoveScreenDown:
-                                        Program.Buffer.ScrollScreenVerticallyBy(1);
-                                        break;
-                                        
-                                    case Action.MoveScreenLeft:
-                                        if (!Program.Screen.queuedCommands.moveHorizontallyBy(-1) && 
-                                            !Program.Screen.rollover.moveHorizontallyBy(-1))
-                                            Program.Buffer.ScrollScreenHorizontallyBy(-1);
-                                        break;
-                                        
-                                    case Action.MoveScreenRight:
-                                        if (!Program.Screen.queuedCommands.moveHorizontallyBy(1) && 
-                                            !Program.Screen.rollover.moveHorizontallyBy(1))
-                                            Program.Buffer.ScrollScreenHorizontallyBy(1);
-                                        break;
-                                        
-                                    case Action.MoveCursorUp:
-                                        if (!Program.Screen.queuedCommands.moveVerticallyBy(-1) && 
-                                            !Program.Screen.rollover.moveVerticallyBy(-1))
-                                        {
-                                            if (Program.Screen.isEditorVisible)
-                                            {
-                                                Program.Editor.MoveCursorUp;
-                                                Program.Buffer.ScrollScreenToBottom;
-                                            }
-                                            else
-                                                Program.Buffer.ScrollScreenVerticallyBy(-1);
-                                        }
-                                        break;
-                                        
-                                    case Action.MoveCursorDown:
-                                        if (!Program.Screen.queuedCommands.moveVerticallyBy(1) && 
-                                            !Program.Screen.rollover.moveVerticallyBy(1))
-                                        {
-                                            if (Program.Screen.isEditorVisible)
-                                            {
-                                                Program.Editor.MoveCursorDown;
-                                                Program.Buffer.ScrollScreenToBottom;
-                                            }
-                                            else
-                                                Program.Buffer.ScrollScreenVerticallyBy(1);
-                                        }
-                                        break;
-                                        
-                                    case Action.MoveCursorLeft:
-                                        if (!Program.Screen.queuedCommands.moveHorizontallyBy(-1) && 
-                                            !Program.Screen.rollover.moveHorizontallyBy(-1))
-                                        {
-                                            if (Program.Screen.isEditorVisible)
-                                            {
-                                                Program.Editor.MoveCursorLeft;
-                                                Program.Buffer.ScrollScreenToBottom;
-                                            }
-                                            else
-                                                Program.Buffer.ScrollScreenHorizontallyBy(-1);
-                                        }
-                                        break;
-                                        
-                                    case Action.MoveCursorRight:
-                                        if (!Program.Screen.queuedCommands.moveHorizontallyBy(1) && 
-                                            !Program.Screen.rollover.moveHorizontallyBy(1))
-                                        {
-                                            if (Program.Screen.isEditorVisible)
-                                            {
-                                                Program.Editor.MoveCursorRight;
-                                                Program.Buffer.ScrollScreenToBottom;
-                                            }
-                                            else
-                                                Program.Buffer.ScrollScreenHorizontallyBy(1);
-                                        }
-                                        break;
-                                        
-                                    case Action.MoveToTop:
-                                        if (Program.Buffer.SelectionType == Program.Buffer.SelectionTypes.EditorOnly)
-                                            Program.Editor.MoveCursorToTop;
-                                        else
-                                            Program.Buffer.ScrollScreenToTop;
-                                        break;
-                                        
-                                    case Action.MoveToBottom:
-                                        Program.Buffer.ScrollScreenToBottom;
-                                        Program.Editor.MoveCursorToBottom;
-                                        break;
-                                    
-                                    case Action.MoveCursorToLineStart:
-                                        Program.Editor.MoveCursorToLineStart;
-                                        Program.Buffer.ScrollScreenToBottom;
-                                        break;
-                                    
-                                    case Action.MoveCursorToLineEnd:
-                                        Program.Editor.MoveCursorToLineEnd;
-                                        Program.Buffer.ScrollScreenToBottom;
-                                        break;
-                                    
-                                    case Action.MoveToWordLeft:
-                                        Program.Editor.MoveCursorToWordLeft;
-                                        Program.Buffer.ScrollScreenToBottom;
-                                        break;
-                                    
-                                    case Action.MoveToWordRight:
-                                        Program.Editor.MoveCursorToWordRight;
-                                        Program.Buffer.ScrollScreenToBottom;
-                                        break;
-                                    
-                                    case Action.PageUp:
-                                        
-                                        if (!Program.Screen.queuedCommands.moveUpByOnePage && 
-                                            !Program.Screen.rollover.moveUpByOnePage && 
-                                            !Program.AutoCompleteDatabase.MoveSuggestionPageUp)
-                                            Program.Buffer.ScrollScreenUpByOnePage;
-                                        
-                                        break;
-                                    
-                                    case Action.PageDown:
-                                        
-                                        if (!Program.Screen.queuedCommands.moveDownByOnePage && 
-                                            !Program.Screen.rollover.moveDownByOnePage && 
-                                            !Program.AutoCompleteDatabase.MoveSuggestionPageDown)
-                                            Program.Buffer.ScrollScreenDownByOnePage;
-                                        
-                                        break;
-                                    
-                                    case Action.SelectAll:
-                                        Program.Editor.SelectAll;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionUp:
-                                        Program.Editor.ExtendSelectionUp;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionDown:
-                                        Program.Editor.ExtendSelectionDown;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionLeft:
-                                        Program.Editor.ExtendSelectionLeft;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionRight:
-                                        Program.Editor.ExtendSelectionRight;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionPageUp:
-                                        break;
-                                    
-                                    case Action.ExtendSelectionPageDown:
-                                        break;
-                                    
-                                    case Action.ExtendSelectionToLineStart:
-                                        Program.Editor.ExtendSelectionToLineStart;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionToLineEnd:
-                                        Program.Editor.ExtendSelectionToLineEnd;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionToTop:
-                                        Program.Editor.ExtendSelectionToTop;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionToBottom:
-                                        Program.Editor.ExtendSelectionToBottom;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionToWordLeft:
-                                        Program.Editor.ExtendSelectionToWordLeft;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.ExtendSelectionToWordRight:
-                                        Program.Editor.ExtendSelectionToWordRight;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.DeleteCharacterLeft:
-                                        Program.Editor.DeleteCharacterLeft;
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.DeleteCharacterRight:
-                                        Program.Editor.DeleteCharacterRight;
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.DeleteWordLeft:
-                                        Program.Editor.DeleteWordLeft;
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.DeleteWordRight:
-                                        Program.Editor.DeleteWordRight;
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.ClearScreen:
-                                        
-                                        if (!Program.Editor.HasAcceptPrompt)
-                                            Program.Interpreter.SetAcceptPrompt(new AcceptPrompt("clear_screen", "Clear screen (Y):", AcceptPrompt.ContentType.ClearScreen));
-                                        break;
-                                    
-                                    case Action.TypeText:
-                                        
-                                        // I wanted to commit on space or return, but this actually requires a deep understanding of whether 
-                                        // and identifier makes sense here because it's annoying if the user actually wants a space.
-                                        // 
-                                        // if ((character != ' ' && character != '\r' && character != '\n') || !Program.AutoCompleteDatabase.CompleteSuggestion)
-                                        if ((character != '\r' && character != '\n') || !Program.AutoCompleteDatabase.CompleteSuggestion)
-                                            Program.Editor.AddCharacter(character);
-                                        
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                        
-                                    case Action.Tab:
-                                        
-                                        if (!Program.AutoCompleteDatabase.CompleteSuggestion)
-                                            Program.Editor.Tab;
-                                        
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.BackTab:
-                                        Program.Editor.BackTab;
-                                        activateEditor;
-                                        break;
-                                    
-                                    case Action.Return:
-                                        //if (!Program.AutoCompleteDatabase.CompleteSuggestion)
-                                            Program.Editor.Return(true, false);
-                                        
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.ShiftReturn:
-                                        Program.Editor.Return(true, true);
-                                        activateEditor!(searchMode.Backward);
-                                        break;
-                                    
-                                    case Action.ConvertToUpperCase:
-                                        Program.Editor.ConvertCase!(Yes.toUpperCase);
-                                        break;
-                                    
-                                    case Action.ConvertToLowerCase:
-                                        Program.Editor.ConvertCase!(No.toUpperCase);
-                                        break;
-                                    
-                                    case Action.Cut:
-                                        auto selectedText = Program.Editor.SelectedText;
-                                        if (selectedText.length > 0)
-                                            SDL_SetClipboardText(selectedText.ToCString).CheckSDLError;
-                                        
-                                        Program.Editor.DeleteSelection;
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.CopyOrBreak:
-                                        auto selectedText = Program.Buffer.SelectedText;
-                                        if (selectedText.length == 0)
-                                            Program.Interpreter.ControlCBreak;
-                                        else
-                                            SDL_SetClipboardText(selectedText.ToCString).CheckSDLError;
-                                        
-                                        break;
-                                    
-                                    case Action.FullCopy:
-                                        auto text = Program.Buffer.CopyWholeItems;
-                                        if (text.length > 0)
-                                            SDL_SetClipboardText(text.ToCString).CheckSDLError;
-                                        
-                                        break;
-                                    
-                                    case Action.CopyField:
-                                        auto text = Program.Buffer.CopyField;
-                                        if (text.length > 0)
-                                            SDL_SetClipboardText(text.ToCString).CheckSDLError;
-                                        
-                                        break;
-                                    
-                                    case Action.Paste:
-                                        auto clipboardText = SDL_GetClipboardText();
-                                        if (clipboardText is null)
-                                            CheckSDLError;
-                                        else
-                                            Program.Editor.AddText(clipboardText.FromCString);
-                                        
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.Save:
-                                        break;
-                                    
-                                    case Action.FindNext:
-                                        Program.Editor.EnableFindPrompt(Program.Buffer.SelectedText);
-                                        activateEditor!(searchMode.Forward);
-                                        break;
-                                    
-                                    case Action.FindPrevious:
-                                        Program.Editor.EnableFindPrompt(Program.Buffer.SelectedText);
-                                        activateEditor!(searchMode.Backward);
-                                        break;
-                                    
-                                    case Action.Undo:
-                                        Program.Editor.Undo;
-                                        break;
-                                    
-                                    case Action.Redo:
-                                        Program.Editor.Redo;
-                                        break;
-                                    
-                                    case Action.ToggleInsertMode:
-                                        Program.Editor.ToggleInsertMode;
-                                        break;
-                                    
-                                    case Action.HistoryPrevious:
-                                        Program.Editor.PreviousCommandInHistory;
-                                        break;
-                                    
-                                    case Action.HistoryNext:
-                                        Program.Editor.NextCommandInHistory;
-                                        break;
-                                    
-                                    case Action.ZoomIn:
-                                        Program.Screen.AdjustFontSizeBy(1);
-                                        break;
-                                    
-                                    case Action.ZoomOut:
-                                        Program.Screen.AdjustFontSizeBy(-1);
-                                        break;
-                                    
-                                    case Action.ToggleFullScreen:
-                                        Program.Screen.ToggleFullScreen;
-                                        break;
-                                    
-                                    case Action.ShowAutoComplete:
-                                        Program.AutoCompleteDatabase.ShowSuggestionPopup;
-                                        break;
-                                    
-                                    case Action.MoveAutoCompleteSuggestionUp:
-                                        Program.AutoCompleteDatabase.MoveSuggestionUp;
-                                        break;
-                                    
-                                    case Action.MoveAutoCompleteSuggestionDown:
-                                        Program.AutoCompleteDatabase.MoveSuggestionDown;
-                                        break;
-                                    
-                                    case Action.F1: break;
-                                    case Action.F2: break;
-                                    case Action.F4: break;
-                                    case Action.F5: break;
-                                    case Action.F6: break;
-                                    case Action.F7: 
-                                        debug
-                                        {
-                                            Program.AutoCompleteDatabase.UpdateSuggestions;
-                                            
-                                            foreach (suggestion; Program.AutoCompleteDatabase.tableSchemasAndSimpleNames.Items)
-                                                Buffer.AddText(suggestion);
-                                        }
-                                        break;
-                                    
-                                    case Action.F8: 
-                                        // debug throw new NonRecoverableException("Test Exception");
-                                        break;
-                                        
-                                    case Action.F9:
-                                        debug
-                                        {
-                                            import autocomplete;
-                                            auto a = new AutoCompleteManager;
-                                            a.Attempt(Program.Editor.Text);
-                                        }
-                                        break;
-                                        
-                                    case Action.F10:
-                                        break;
-                                    
-                                    case Action.F11:
-                                        debug Buffer.AddTestData;
-                                        break;
-                                    
-                                    case Action.F12:
-                                        break;
-                                }
+                                processInput('\0', ParseKey(key, isControlKeyDown, isShiftKeyDown, isAltKeyDown)); 
                                 
                                 break;
-                            
+                                
+                            case SDL_KEYUP:
+                                hasReceivedUserInput = true;
+                                switch (event.key.keysym.sym)
+                                {
+                                    case SDLK_LCTRL:  isLeftControlKeyDown  = false; isControlKeyDown = isLeftControlKeyDown || isRightControlKeyDown; continue;
+                                    case SDLK_RCTRL:  isRightControlKeyDown = false; isControlKeyDown = isLeftControlKeyDown || isRightControlKeyDown; continue;
+                                    case SDLK_LSHIFT: isLeftShiftKeyDown    = false; isShiftKeyDown   = isLeftShiftKeyDown   || isRightShiftKeyDown;   continue;
+                                    case SDLK_RSHIFT: isRightShiftKeyDown   = false; isShiftKeyDown   = isLeftShiftKeyDown   || isRightShiftKeyDown;   continue;
+                                    case SDLK_LALT:   isLeftAltKeyDown      = false; isAltKeyDown     = isLeftAltKeyDown     || isRightAltKeyDown;     continue;
+                                    case SDLK_RALT:   isRightAltKeyDown     = false; isAltKeyDown     = isLeftAltKeyDown     || isRightAltKeyDown;     continue;
+                                    default: continue;
+                                }
+                                
                             default:
                                 break;
                         }
@@ -958,7 +962,7 @@ public abstract final class Program
         }
         catch (Throwable e) 
         {
-            MessageBoxA(null, e.toString().ToCString, null, MB_ICONEXCLAMATION);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Critical Error!".ptr, e.toString().ToCString, null);
             return 1;
         }
     }

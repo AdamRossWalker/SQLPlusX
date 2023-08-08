@@ -1,16 +1,18 @@
 module autocomplete;
 
-import std.algorithm : canFind, min, max, splitter, startsWith, endsWith, uniq, sort;
+import std.algorithm : canFind, filter, min, max, splitter, startsWith, endsWith, uniq, sort;
 import std.array : array;
-import std.ascii : isUpper, isLower;
 import std.conv : to;
 import std.range : chain, padRight;
 import std.string : toUpper, toLower, strip, lastIndexOf;
 import std.sumtype : match, tryMatch;
 import std.traits : hasUDA, getUDAs, getSymbolsByUDA;
 import std.typecons : No;
+import std.uni : isUpper, isLower;
+import std.utf : byDchar;
 
 import program;
+import utf8_slice;
 
 public final class AutoCompleteManager
 {
@@ -80,7 +82,6 @@ public final class AutoCompleteManager
     
     private database.DatabaseManager _database;
     public static string CurrentSchema;
-    
     
     private CommandWords baseCommandWords;
     public LinearLookup tableSchemasAndSimpleNames = new LinearLookup;
@@ -217,19 +218,19 @@ public final class AutoCompleteManager
             return false;
         
         auto newText = CurrentSuggestion;
-        const query = Program.Editor.Text;
+        const queryUtf32 = Program.Editor.Text.to!dstring;
         auto offset = Program.Editor.CursorOffset;
         
         auto wordStart = offset;
-        while (wordStart > 0 && query[wordStart - 1].IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.SingleWordOnly, ValidateQuote.AllowQuote))
+        while (wordStart > 0 && queryUtf32[wordStart - 1].IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.SingleWordOnly, ValidateQuote.AllowQuote))
             wordStart--;
         
-        newText = newText[offset - wordStart .. $];
+        newText = newText.toUtf8Slice[offset - wordStart .. $];
         
         if (newText.length == 0)
             return false;
         
-        if (newText[$ - 1] != '"')
+        if (newText.toUtf8Slice[$ - 1] != '"')
         {
             // Try to align the case with whatever the user has currently typed.
             
@@ -237,14 +238,14 @@ public final class AutoCompleteManager
             {
                 offset--;
                 
-                if (offset < 0 || offset >= query.length)
+                if (offset < 0 || offset >= queryUtf32.length)
                     break;
                 
                 // Non-alpha characters may be neither upper nor lower case.  Ignore these and look back further.
-                if (query[offset].isUpper)
+                if (queryUtf32[offset].isUpper)
                     break;
                 
-                if (query[offset].isLower)
+                if (queryUtf32[offset].isLower)
                 {
                     newText = newText.toLower;
                     break;
@@ -487,13 +488,12 @@ public final class AutoCompleteManager
             if (source[0] == '\"' && source[$ - 1] == '\"')
                 source = source[1 .. $ - 1];
             
-            foreach (ch; source)
+            foreach (ch; source.byDchar)
                 if (!ch.IsOracleIdentifierCharacter!(ValidateCase.UpperCaseOnly))
                     return "\"" ~ source ~ "\"";
             
             return source;
         }
-        
         
         switch (record.getString(0))
         {
@@ -552,8 +552,8 @@ public final class AutoCompleteManager
     
     void AddColumn(string schema, string tableName, Column column)
     {
-        IdentifierLookup[schema] = NamedColor.Identifier;
-        IdentifierLookup[tableName] = NamedColor.Identifier;
+        IdentifierLookup[schema]      = NamedColor.Identifier;
+        IdentifierLookup[tableName]   = NamedColor.Identifier;
         IdentifierLookup[column.Name] = NamedColor.Identifier;
         
         if (lastTable !is null &&
@@ -713,15 +713,11 @@ public final class AutoCompleteManager
         catch (FileException) { }
     }
     
-    void AddDefine(string variableName)
-    {
+    void AddDefine(string variableName) =>
         baseCommandWords.Words["UNDEFINE"].AddWord(variableName);
-    }
     
-    void RemoveDefine(string variableName)
-    {
+    void RemoveDefine(string variableName) =>
         baseCommandWords.Words["UNDEFINE"].RemoveWord(variableName);
-    }
     
     void Complete()
     {
@@ -827,7 +823,7 @@ public final class AutoCompleteManager
         
         auto maxWidthInCharacters = 0;
         foreach (suggestion; newAutoCompleteSuggestions)
-            maxWidthInCharacters = max(maxWidthInCharacters, suggestion.intLength);
+            maxWidthInCharacters = max(maxWidthInCharacters, suggestion.toUtf8Slice.intLength);
         
         
         AutoCompleteSuggestions = newAutoCompleteSuggestions;
@@ -854,28 +850,30 @@ public final class AutoCompleteManager
         if (cursorOffset == 0)
             return null;
         
-        cursorOffset = min(cursorOffset, command.intLength);
+        const commandUtf32 = command.to!dstring;
         
-        if (cursorOffset < command.length && 
-            command[cursorOffset].IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.AllowDot, ValidateQuote.AllowQuote))
+        cursorOffset = min(cursorOffset, commandUtf32.intLength);
+        
+        if (cursorOffset < commandUtf32.length && 
+            commandUtf32[cursorOffset].IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.AllowDot, ValidateQuote.AllowQuote))
             return null;
         
         auto wordStart = cursorOffset;
-        while (wordStart > 0 && command[wordStart - 1].IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.AllowDot, ValidateQuote.AllowQuote))
+        while (wordStart > 0 && commandUtf32[wordStart - 1].IsOracleIdentifierCharacter!(ValidateCase.Either, ValidateDot.AllowDot, ValidateQuote.AllowQuote))
             wordStart--;
         
-        auto currentWord = command[wordStart .. cursorOffset];
+        auto currentWord = commandUtf32[wordStart .. cursorOffset];
         
         if (currentWord.length == 0)
         {
             auto isLineEmpty = true;
             ulong lineStart = cursorOffset;
             while (lineStart > 0 && 
-                   command[lineStart - 1] != '\r' && 
-                   command[lineStart - 1] != '\n')
+                   commandUtf32[lineStart - 1] != '\r' && 
+                   commandUtf32[lineStart - 1] != '\n')
             {
-                if (command[lineStart - 1] != ' ' &&
-                    command[lineStart - 1] != '\t')
+                if (commandUtf32[lineStart - 1] != ' ' &&
+                    commandUtf32[lineStart - 1] != '\t')
                 {
                     isLineEmpty = false;
                     break;
@@ -892,12 +890,12 @@ public final class AutoCompleteManager
             currentWord = currentWord.toUpper;
         
         if (!Interpreter.IsMultiLineCommand(command))
-            return ParseCommand(command, cursorOffset, currentWord);
+            return ParseCommand(command, cursorOffset, currentWord.to!string);
         
         if (Status != States.Complete)
             return null;
         
-        const names = OracleNames.ParseName!(OracleNames.ParseQuotes.Keep)(currentWord);
+        const names = OracleNames.ParseName!(OracleNames.ParseQuotes.Keep)(currentWord.to!string);
         
         // These names might not be Schema.TableName.ColumnName because we could have either 
         // Schema.TableName or TableName.ColumnName which may go into the wrong properties 
@@ -1115,7 +1113,7 @@ public final class AutoCompleteManager
     
     private string[] ParseCommand(string commandText, const int startOffset, string currentWord) pure
     {
-        commandText = commandText[0 .. startOffset].strip;
+        commandText = commandText.toUtf8Slice[0 .. startOffset].strip;
         
         const dotPosition = lastIndexOf(currentWord, '.');
         if (dotPosition >= 0)
@@ -1208,7 +1206,7 @@ public final class AutoCompleteManager
         auto lastSectionType = SectionTypes.None;
         auto lastSectionStartOffset = 0;
         
-        auto originalQueryLength = startOffset + query.intLength;
+        auto originalQueryLength = startOffset + query.toUtf8Slice.intLength;
         auto tokenStartOffset = startOffset;
         auto tokenEndOffset = startOffset;
         
@@ -1216,10 +1214,10 @@ public final class AutoCompleteManager
         {
             while (query.length > 0)
             {
-                tokenStartOffset = originalQueryLength - query.intLength;
+                tokenStartOffset = originalQueryLength - query.toUtf8Slice.intLength;
                 auto token = Interpreter.ConsumeToken!(Interpreter.SplitBy.Complex)(query);
                 
-                tokenEndOffset = tokenStartOffset + token.intLength;
+                tokenEndOffset = tokenStartOffset + token.toUtf8Slice.intLength;
                 return token.toUpper;
             }
             
@@ -1230,7 +1228,6 @@ public final class AutoCompleteManager
         int loopCount = 0;
         while (!(query.length == 0 && token == ""))
         {
-            //debug {Program.Buffer.AddText("Token: \"" ~ token ~ "\".");}
             loopCount++;
             if (loopCount > 65535)
                 throw new NonRecoverableException("Parsing logic error.");
@@ -1277,7 +1274,7 @@ public final class AutoCompleteManager
             if (token == "(")
             {
                 auto children = ParseQuery(query, tokenEndOffset);
-                auto scopeEndOffset = originalQueryLength - query.intLength;
+                auto scopeEndOffset = originalQueryLength - query.toUtf8Slice.intLength;
                 token = GetNextToken;
                 
                 final switch (lastSectionType) with (SectionTypes)
@@ -1431,7 +1428,6 @@ public final class AutoCompleteManager
                             tableInput.ScopeEndOffset.to!string);
                     
                     if (table !is null)
-                    {
                         Program.Buffer.AddText(
                             ("    Table: " ~ 
                             table.Schema ~ (table.Schema.length > 0 ? "." : "") ~  
@@ -1439,17 +1435,6 @@ public final class AutoCompleteManager
                             table.AliasName).padRight(' ', 30).to!string ~ " " ~ 
                             table.ScopeStartOffset.to!string.padRight(' ', 10).to!string ~ 
                             table.ScopeEndOffset.to!string);
-                        // FFS There are no tables loaded on this thread.
-                        // 
-                        // Program.Buffer.AddText("    Table Count: " ~ tablesLookup.length.to!string);
-                        // 
-                        // auto tableRef = (table.Schema ~ (table.Schema.length > 0 ? "." : "") ~ table.TableName) in tablesLookup;
-                        // if (tableRef is null)
-                        //     Program.Buffer.AddText("    Source table not found!");
-                        // else
-                        //     foreach (sourceColumn; (*tableRef).Columns)
-                        //         Program.Buffer.AddText("    " ~ sourceColumn.Name ~ ": " ~ sourceColumn.Type);
-                    }
                     
                     if (column !is null)
                         Program.Buffer.AddText(
@@ -1587,15 +1572,9 @@ public class LinearLookup
             popFront;
         }
         
-        bool empty() const 
-        {
-            return Index >= Owner.Items.length;
-        }
+        bool empty() const => Index >= Owner.Items.length;
         
-        string front() const 
-        {
-            return Owner.Items[Index];
-        }
+        string front() const => Owner.Items[Index];
         
         void popFront() @nogc nothrow
         {
@@ -1623,7 +1602,6 @@ public class LinearLookup
         }
     }
 }
-
 
 // Returns true if fullText starts with startingText AND 
 // is longer than startingText.

@@ -47,6 +47,7 @@ import ort;
 
 import program;
 import range_extensions;
+import utf8_slice;
 
 // For this to work, the following the Oracle OCI Instant Client Light is required:
 //    
@@ -278,7 +279,11 @@ private static OCIError* error;
 
 public static void ThreadLocalInitialisation()
 {
-    OCIEnvCreate(
+    // This doesn't have a constant declared.
+    // https://stackoverflow.com/questions/69139801/how-do-i-use-ocienvnlscreate-to-always-get-char-and-nchar-data-back-in-utf8-en
+    enum OCI_UTF8 = 871;
+
+    OCIEnvNlsCreate(
         &environment, 
         OCI_THREADED | OCI_NO_MUTEX | OCI_OBJECT, 
         null, 
@@ -286,7 +291,9 @@ public static void ThreadLocalInitialisation()
         null, 
         null, 
         0, 
-        null)
+        null, 
+        OCI_UTF8,
+        OCI_UTF8)
         .checkResult(environment);
     
     error = allocateHandle!OCIError;
@@ -359,7 +366,6 @@ public struct OracleNumber
                 .checkResult(error);
         catch (OracleException exception)
         {
-            debug DebugText = exception.message.to!string;
             textBufferSize = cast(uint)min(numberFormat.length, 255);
             textBuffer[0 .. textBufferSize] = '#';
         }
@@ -524,6 +530,11 @@ public final class Worker
         send(ownerThreadId, thisTid, InstructionResult(result)); 
     }
     
+    private void reply(MessageResultType result, string message = "", bool isFormattable = false)
+    {
+        reply(MessageResult(result, message, isFormattable));
+    }
+    
     private void report(string message)
     {
         reply(MessageResultType.Information, message);
@@ -532,11 +543,6 @@ public final class Worker
     private void reportWarning(string message)
     {
         reply(MessageResultType.Warning, message);
-    }
-    
-    private void reply(MessageResultType result, string message = "", bool isFormattable = false)
-    {
-        reply(MessageResult(result, message, isFormattable));
     }
     
     private void replyThreadFailure(string message)
@@ -776,6 +782,17 @@ public final class Worker
         RefreshDefaultDateFormat;
         
         ExecuteScalarSynchronous("BEGIN DBMS_OUTPUT.ENABLE(1000000); END;");
+        
+        // static char[OCI_NLS_MAXBUFSZ] nlsCharacterSet;
+        // OCINlsGetInfo(
+        //     cast(void*)session, 
+        //     error, 
+        //     cast(ubyte*)nlsCharacterSet.ptr, 
+        //     nlsCharacterSet.length, 
+        //     cast(ushort)OCI_NLS_CHARACTER_SET)
+        //     .checkResult(error, &reportWarning);
+        // 
+        // report("Character set = \"" ~ nlsCharacterSet.ptr.FromCString ~ "\"");
         
         reply(MessageResultType.Connected, currentSchema ~ "@" ~ databaseName);
     }
@@ -1182,7 +1199,7 @@ public final class Worker
                                     createInputBinding("p_schema",      procedure.Schema), 
                                     createInputBinding("p_object_name", procedure.ObjectName));
                                 
-                                auto maximumVariableNameLength = variables.map!(v => v.Name.intLength).reduceMax(0);
+                                auto maximumVariableNameLength = variables.map!(v => v.Name.toUtf8Slice.intLength).reduceMax(0);
                                 
                                 foreach (variable; variables)
                                 {
@@ -1266,8 +1283,8 @@ public final class Worker
                         
                         string indentation;
                         
-                        auto maximumParameterNameLength = parameters.map!(p => p.ArgumentName.intLength).reduceMax(0);
-                        auto maximumParameterInOutLength = parameters.map!(p => p.InOut.intLength).reduceMax(0);
+                        auto maximumParameterNameLength = parameters.map!(p => p.ArgumentName.toUtf8Slice.intLength).reduceMax(0);
+                        auto maximumParameterInOutLength = parameters.map!(p => p.InOut.toUtf8Slice.intLength).reduceMax(0);
                         
                         if (firstMember)
                             firstMember = false;
@@ -1279,7 +1296,7 @@ public final class Worker
                             description.put("    ");
                             
                             // The first parameter is the function return type if there is no name.
-                            if (parameters.length > 0 && parameters[0].ArgumentName.length == 0)
+                            if (parameters.length > 0 && parameters[0].ArgumentName.length == 0 && parameters[0].Type.length > 0)
                                 description.put("FUNCTION");
                             else
                                 description.put("PROCEDURE");
@@ -1413,9 +1430,12 @@ public final class Worker
                                 if (parameter.DataLevel > 0)
                                     continue;
                                 
+                                if (parameter.Type.length == 0)
+                                    continue;
+                                
                                 description.put(lineEnding);
                                 description.put(indentation);
-                                description.put("RETURN ");
+                                description.put("RETURN");
                                 AppendType!true(parameter);
                                 break;
                             }
@@ -1532,7 +1552,7 @@ public final class Worker
                             createInputBinding("p_schema", type.Schema), 
                             createInputBinding("p_type_name", type.ObjectName));
                         
-                        auto maximumAttributeNameLength = attributes.map!(a => a.AttributeName.intLength).reduceMax(0);
+                        auto maximumAttributeNameLength = attributes.map!(a => a.AttributeName.toUtf8Slice.intLength).reduceMax(0);
                         
                         foreach (attribute; attributes)
                         {
@@ -1682,7 +1702,7 @@ public final class Worker
                                 createInputBinding("p_method_name", method.Name), 
                                 createInputBinding("p_method_no",   method.Number));
                             
-                            auto maximumParameterNameLength = parameters.map!(p => p.Name.intLength).reduceMax(0);
+                            auto maximumParameterNameLength = parameters.map!(p => p.Name.toUtf8Slice.intLength).reduceMax(0);
                             
                             foreach (parameterIndex, parameter; parameters)
                             {
@@ -3102,32 +3122,40 @@ public final class Worker
                             case DescriptorCategory.Lob:
                                 auto locator = value.getLocator!OCILobLocator;
                                 
-                                uint lobLength;
-                                OCILobGetLength(
+                                ulong lobLength;
+                                OCILobGetLength2(
                                     serviceContext, 
                                     error, 
                                     locator, 
                                     &lobLength)
                                     .checkResult(error, &reportWarning);
                                 
-                                auto lobData = new char[lobLength];
-                                uint lobReadLength = lobLength;
+                                // Apparently I need to reserve x4 as much memory because the translation happens client 
+                                // side.  When experimenting for some reason I received 1/3 the characters which I wasn't 
+                                // able to explain.  Regardless, the Stack Overflow advice was to reserve enough to support 
+                                // UTF-32.
+                                ulong dataLength = lobLength * 4;
+                                auto lobData = new char[dataLength];
+                                ulong lobReadBytesLength = lobLength;
+                                ulong lobReadCharactersLength = lobLength;
                                 
-                                OCILobRead(
+                                OCILobRead2(
                                     serviceContext, 
                                     error, 
                                     locator, 
-                                    &lobReadLength, 
+                                    &lobReadBytesLength, 
+                                    &lobReadCharactersLength, 
                                     1, 
                                     lobData.ptr, 
-                                    lobLength, 
+                                    dataLength, 
+                                    OCI_ONE_PIECE, 
                                     null, 
                                     null, 
                                     0, 
                                     0)
                                     .checkResult(error, &reportWarning);
                                 
-                                fields ~= OracleField(lobData[0 .. lobReadLength].to!string);
+                                fields ~= OracleField(lobData[0 .. lobReadCharactersLength].to!string);
                                 break;
                                 
                             case DescriptorCategory.DateTime:

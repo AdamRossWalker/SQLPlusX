@@ -4,9 +4,12 @@ import std.algorithm : max, min, any;
 import std.conv : to, toChars, LetterCase;
 import std.datetime : Duration;
 import std.file : write, append;
-import std.range : padLeft, padRight;
+import std.range : padLeft, padRight, walkLength;
 import std.traits : Unqual;
 import std.typecons : Tuple, Flag, Yes, No;
+import std.utf : byDchar;
+
+import utf8_slice;
 
 public enum FormattingMode { Apply, Hidden, Disabled }
 public enum FontStyle { Normal, Bold }
@@ -48,7 +51,7 @@ struct FormattedText
         const FontStyle style = FontStyle.Normal, 
         const ubyte opacity = 255) nothrow
     {
-        Spans ~= Span(Text[startOffset .. endOffset], startOffset, color, style, opacity);
+        Spans ~= Span(Text.toUtf8Slice[startOffset .. endOffset], startOffset, color, style, opacity);
     }
 }
 
@@ -67,15 +70,13 @@ public const (char)* ToCString(string source) pure nothrow
     return source.toStringz;
 }
 
-public string[] SplitBySpaces(string source) pure
-{
-    import std.algorithm : filter, splitter;
-    import std.array : array;
-    
-    return source.splitter(' ').filter!(p => p.length > 0).array;
-}
-
-const(char)[] toStringEmplace(int numberLength, char leadingCharacter = ' ', int maxLength, T)(T number, return ref char[maxLength] destination) @nogc nothrow
+const(char)[] toStringEmplace(
+    int numberLength, 
+    char leadingCharacter = ' ', 
+    int maxLength, 
+    T)
+   (T number, 
+    return ref char[maxLength] destination) @nogc nothrow
 if (is(typeof(T.init % 10 == 0) == bool) &&
     numberLength <= maxLength)
 {
@@ -168,14 +169,11 @@ public int intLength(T)(const scope T[] array) pure nothrow @safe @nogc
 enum debugLogFileName = "DebugLog.txt";
 enum debugLogType { Append, Reset }
 
-public void DebugLog(string file = __FILE__, int line = __LINE__, T)(lazy string text, T value) nothrow
-{
+public void DebugLog(string file = __FILE__, int line = __LINE__, T)(lazy string text, T value) nothrow =>
     DebugLog!(debugLogType.Append, file, line)(text ~ " = \"" ~ value.to!string ~ "\"");
-}
 
 public void DebugLog(debugLogType type = debugLogType.Append, string file = __FILE__, int line = __LINE__)(lazy string text) nothrow
 {
-    //debug 
     try
     {
         import std.datetime.systime : Clock;

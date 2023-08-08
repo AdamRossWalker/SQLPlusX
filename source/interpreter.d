@@ -1,23 +1,24 @@
 module interpreter;
 
 import std.algorithm : min, max;
-import std.ascii : isAlpha, isAlphaNum, isDigit, isUpper, isWhite;
-import std.array : split, join;
+import std.array : Appender, split, join;
 import std.algorithm : canFind, startsWith, endsWith, filter;
 import std.conv: to, ConvException;
 import std.range : dropBack, padLeft, repeat;
 import std.string : toUpper, strip, stripLeft, splitLines, indexOf, lastIndexOf;
 import std.traits : hasUDA, getUDAs, getSymbolsByUDA, EnumMembers, arity;
 import std.typecons : Tuple;
+import std.uni : isAlpha, isAlphaNum, isNumber, isUpper, isWhite;
 
 import core.runtime;
 import core.sys.windows.windows;
 import std.windows.syserror;
 
-import derelict.sdl2.sdl;
+import bindbc.sdl;
 
 import program;
 import range_extensions;
+import utf8_slice;
 
 enum QueueAt { Start, End }
 enum CommandSource { User, ScriptFile }
@@ -31,25 +32,17 @@ private struct CommandQueue
     public const(int)[] formattedSectionsLengths;
     public int width = 0;
     
-    public int length() const @nogc nothrow
-    {
-        return queue.intLength;
-    }
+    public int length() const @nogc nothrow => queue.intLength;
     
-    public int totalLines() const @nogc nothrow
-    {
-        return formattedLines.intLength;
-    }
+    public int totalLines() const @nogc nothrow => formattedLines.intLength;
     
-    public const(FormattedText)[] visibleLines(const int visibleLineCount)
-    {
-        return formattedLines[Program.Screen.queuedCommands.verticalScrollOffset .. min(Program.Screen.queuedCommands.verticalScrollOffset + visibleLineCount, $)];
-    }
+    public const(FormattedText)[] visibleLines(const int visibleLineCount) =>
+        formattedLines[Program.Screen.queuedCommands.verticalScrollOffset .. min(Program.Screen.queuedCommands.verticalScrollOffset + visibleLineCount, $)];
     
     private void updateWidth(const FormattedText[] formattedText = null)
     {
         foreach (line; formattedText)
-            width = max(width, line.Text.intLength);
+            width = max(width, line.Text.toUtf8Slice.intLength);
         
         if (queue.length == 0)
         {
@@ -180,7 +173,7 @@ public final class Interpreter
     // expand? 
     // doc?
     
-    public static bool IsMultiLineCommand(string command) pure @nogc nothrow
+    public static bool IsMultiLineCommand(Char)(immutable(Char)[] command) pure @nogc nothrow
     {
         enum string[] multiLineStatementKeywords = 
         [
@@ -226,7 +219,7 @@ public final class Interpreter
         return false;
     }
     
-    private static bool IsPassThroughCommand(string command) pure @nogc nothrow
+    private static bool IsPassThroughCommand(Char)(immutable(Char)[] command) pure @nogc nothrow
     {
         static immutable passThroughKeywords = 
         [
@@ -247,13 +240,25 @@ public final class Interpreter
         return false;
     }
     
-    public static bool StartsWithCommandWord(string abbreviatedText, string fullText = abbreviatedText)(const string command) pure @nogc nothrow
+    public static bool StartsWithCommandWord(string abbreviatedText, string fullText = abbreviatedText)(string command) pure @nogc nothrow => 
+        StartsWithCommandWord!(char, abbreviatedText, fullText)(command);
+    
+    public static bool StartsWithCommandWord(string abbreviatedText, string fullText = abbreviatedText)(string command, ref string remainingCommand) pure @nogc nothrow => 
+        StartsWithCommandWord!(char, abbreviatedText, fullText)(command, remainingCommand);
+    
+    public static bool StartsWithCommandWord(dstring abbreviatedText, dstring fullText = abbreviatedText)(dstring command) pure @nogc nothrow => 
+        StartsWithCommandWord!(dchar, abbreviatedText, fullText)(command);
+    
+    public static bool StartsWithCommandWord(dstring abbreviatedText, dstring fullText = abbreviatedText)(dstring command, ref dstring remainingCommand) pure @nogc nothrow => 
+        StartsWithCommandWord!(dchar, abbreviatedText, fullText)(command, remainingCommand);
+    
+    public static bool StartsWithCommandWord(Char, immutable(Char)[] abbreviatedText, immutable(Char)[] fullText = abbreviatedText)(immutable(Char)[] command) pure @nogc nothrow
     {
-        string dummy;
-        return StartsWithCommandWord!(abbreviatedText, fullText)(command, dummy);
+        immutable(Char)[] dummy;
+        return StartsWithCommandWord!(Char, abbreviatedText, fullText)(command, dummy);
     }
     
-    public static bool StartsWithCommandWord(string abbreviatedText, string fullText = abbreviatedText)(const string command, ref string remainingCommand) pure @nogc nothrow
+    public static bool StartsWithCommandWord(Char, immutable(Char)[] abbreviatedText, immutable(Char)[] fullText = abbreviatedText)(immutable(Char)[] command, ref immutable(Char)[] remainingCommand) pure @nogc nothrow
     {
         enum abbreviatedNames = abbreviatedText.split(' ');
         enum fullNames        = fullText.split(' ');
@@ -267,7 +272,7 @@ public final class Interpreter
         {{
             enum abbreviatedName = abbreviatedNames[nameIndex];
             enum abbreviatedNameLength = abbreviatedName.length;
-          
+            
             static assert(fullName.startsWith(abbreviatedName) || abbreviatedName == skip, 
                 "Each abbreviated word must be the start of the full word.  Use a hyphen to signal this abbreviation is optional.");
             
@@ -308,33 +313,34 @@ public final class Interpreter
     
     public static string ConsumeToken(
         SplitBy       splitMethod = SplitBy.WhiteSpace, 
-        ValidateDot   dotMode     = ValidateDot.AllowDot)(ref string remainingCommand) pure @nogc nothrow
+        ValidateDot   dotMode     = ValidateDot.AllowDot)(ref string remainingCommand) pure
     {
         auto index = -1;
+        auto remainingCommandUtf32 = remainingCommand.to!dstring;
         
-        char GetNextCharacter()
+        dchar GetNextCharacter()
         {
-            if (index >= remainingCommand.intLength)
+            if (index >= remainingCommandUtf32.intLength)
                 return '\0';
             
             index++;
             
-            if (index == remainingCommand.length)
+            if (index == remainingCommandUtf32.length)
                 return '\0';
             else
-                return remainingCommand[index];
+                return remainingCommandUtf32[index];
         }
         
         string ExtractParameter(int startOffset, int endOffset)
         {
-            auto parameter = remainingCommand[startOffset .. endOffset];
-            remainingCommand = remainingCommand[endOffset .. $].stripLeft;
+            auto parameter = remainingCommandUtf32[startOffset .. endOffset].to!string;
+            remainingCommand = remainingCommandUtf32[endOffset .. $].stripLeft.to!string;
             return parameter;
         }
         
         while (true)
         {
-            char character;
+            dchar character;
             
             do
                 character = GetNextCharacter;
@@ -347,8 +353,8 @@ public final class Interpreter
             }
             
             if (character == '-' && 
-                remainingCommand.length > index + 1 && 
-                remainingCommand[index + 1] == '-')
+                remainingCommandUtf32.length > index + 1 && 
+                remainingCommandUtf32[index + 1] == '-')
             {
                 index++;
                 
@@ -360,8 +366,8 @@ public final class Interpreter
             }
             
             if (character == '/' &&
-                remainingCommand.length > index + 1 && 
-                remainingCommand[index + 1] == '*')
+                remainingCommandUtf32.length > index + 1 && 
+                remainingCommandUtf32[index + 1] == '*')
             {
                 index++;
                 
@@ -369,8 +375,8 @@ public final class Interpreter
                     character = GetNextCharacter;
                 while (character != '\0' &&
                            !(character == '*' &&
-                             remainingCommand.length > index + 1 && 
-                             remainingCommand[index + 1] == '/'));
+                             remainingCommandUtf32.length > index + 1 && 
+                             remainingCommandUtf32[index + 1] == '/'));
                 
                 continue;
             }
@@ -549,24 +555,25 @@ public final class Interpreter
         if (!Program.Settings.SubstitutionEnabled)
             return false;
         
+        auto commandUtf32 = command.to!dstring;
         auto substitutionCharacter = Program.Settings.SubstitutionCharacter;
-        foreach (index, character; command)
+        foreach (index, character; commandUtf32)
         {
             if (character != substitutionCharacter)
                 continue;
             
             startIndex = cast(int)index;
             endIndex = cast(int)index + 1;
-            while (endIndex < command.length)
+            while (endIndex < commandUtf32.length)
             {
-                auto nextCharacter = command[endIndex];
+                auto nextCharacter = commandUtf32[endIndex];
                 if (!nextCharacter.isAlphaNum && nextCharacter != '_')
                     break;
                 
                 endIndex++;
             }
             
-            name = command[startIndex + 1 .. endIndex].toUpper;
+            name = command.toUtf8Slice[startIndex + 1 .. endIndex].toUpper;
             return true;
         }
         
@@ -589,13 +596,12 @@ public final class Interpreter
             //     throw new NonRecoverableException("Undefined variable: " ~ name);  // TODO: we should be checking for these up front but I can't find it.
             
             auto value = Settings.SubstitutionVariable(name);
-            command = command[0 .. startIndex] ~ value ~ command[endIndex .. $];
+            command = command.toUtf8Slice[0 .. startIndex] ~ value ~ command.toUtf8Slice[endIndex .. $];
             
             if (Program.Settings.IsVerifyOn)
                 Program.Buffer.AddText("Old: \"" ~ name ~ "\"" ~ lineEnding ~ "New: \"" ~ command ~ "\"" ~ lineEnding ~ lineEnding);
         }
     }
-    
     
     public void ProcessFile(string filename, string parameters)
     {
@@ -606,14 +612,42 @@ public final class Interpreter
             variableNumber++;
         }
         
-        // Don't use readText because our file may be ANSI, not UTF-8.
+        // Don't use readText because our file may not be UTF-8.
         import std.file : read;
-        Execute!(CommandSource.ScriptFile, QueueAt.Start)(cast(immutable(char)[])filename.read);
+        import std.encoding : EncodingScheme, INVALID_SEQUENCE;
+        
+        auto encodingScheme = EncodingScheme.create(Program.Settings.ScriptFileFormat);
+        
+        auto fileData = cast(const(ubyte)[])filename.read;
+        
+        Appender!string decodedText;
+        
+        auto invalidCharactersFound = false;
+        while (fileData.length != 0)
+        {
+            auto character = encodingScheme.safeDecode(fileData);
+            if (character == INVALID_SEQUENCE)
+            {
+                invalidCharactersFound |= true;
+                continue;
+            }
+            
+            decodedText ~= character;
+        }
+        
+        if (invalidCharactersFound)
+            Program.Buffer.AddText(
+                "Loading " ~ filename ~ ": " ~ lineEnding ~ 
+                "  Skipped invalid characters for " ~ Program.Settings.ScriptFileFormat ~ " encoding." ~ lineEnding ~ 
+                "  Consider specifying the encoding scheme using \"SET SCRIPTFILEFORMAT Latin1\" (for example US ASCII).", 
+                NamedColor.Alert);
+        
+        Execute!(CommandSource.ScriptFile, QueueAt.Start)(decodedText.data);
     }
     
     CommandQueue commandQueue;
     
-    public auto QueuedCommandCount() const @nogc nothrow { return commandQueue.length; }
+    public auto QueuedCommandCount() const @nogc nothrow => commandQueue.length;
     
     public bool CommandsInProgress() const @nogc nothrow
     {
@@ -708,7 +742,7 @@ public final class Interpreter
                 }
                 
                 auto fullPath = Commands.FindFile(filename);
-                if (fullPath is null)
+                if (fullPath == "")
                 {
                     Program.Buffer.AddText("File not found: \"" ~ filename ~ "\"" ~ lineEnding);
                     return;
@@ -791,7 +825,7 @@ public final class Interpreter
                     continue;
                 }
                 
-                Program.Buffer.AddTextWithPrompt(acceptPrompt.Prompt, (acceptPrompt.IsHidden ? repeat('*', acceptPrompt.Result.length).to!string : acceptPrompt.Result));
+                Program.Buffer.AddTextWithPrompt(acceptPrompt.Prompt, (acceptPrompt.IsHidden ? repeat('*', acceptPrompt.Result.toUtf8Slice.length).to!string : acceptPrompt.Result));
                 
                 final switch (acceptPrompt.Content) with (AcceptPrompt.ContentType)
                 {
@@ -930,7 +964,7 @@ public final class Interpreter
             if (StartsWithCommandWord!("ACC", "ACCEPT")(command, remainingCommand))
             {
                 auto name = ConsumeToken(remainingCommand).toUpper;
-            
+                
                 if (name.length == 0)
                 {
                     Program.Buffer.AddText("ACCEPT command missing variable name." ~ lineEnding);
@@ -938,40 +972,27 @@ public final class Interpreter
                 }
                 
                 auto type = AcceptPrompt.InputType.Text;
-                if (Interpreter.StartsWithCommandWord!("CHAR")(remainingCommand, remainingCommand))
-                {
-                    // type = AcceptPrompt.InputType.Text;
-                }
+                if (Interpreter.StartsWithCommandWord!("CHAR")(remainingCommand, remainingCommand)) 
+                { } // type = AcceptPrompt.InputType.Text;
                 else if (Interpreter.StartsWithCommandWord!("NUM", "NUMBER")(remainingCommand, remainingCommand))
-                {
                     type = AcceptPrompt.InputType.Number;
-                }
                 else if (Interpreter.StartsWithCommandWord!("DATE")(remainingCommand, remainingCommand))
-                {
                     type = AcceptPrompt.InputType.Date;
-                }
                 
                 auto format = "";
                 if (Interpreter.StartsWithCommandWord!("FOR", "FORMAT")(remainingCommand, remainingCommand))
-                {
                     format = ConsumeToken(remainingCommand);
-                }
                 
                 auto defaultValue = "";
                 if (Interpreter.StartsWithCommandWord!("DEF", "DEFAULT")(remainingCommand, remainingCommand))
-                {
                     defaultValue = ConsumeToken(remainingCommand);
-                }
                 
                 auto prompt = "";
                 if (Interpreter.StartsWithCommandWord!("PROMPT")(remainingCommand, remainingCommand))
-                {
                     prompt = ConsumeToken(remainingCommand).strip(['\'']);
-                }
                 else if (Interpreter.StartsWithCommandWord!("NOPR", "NOPROMPT")(remainingCommand, remainingCommand))
-                {
+                { } 
                     // prompt = "";
-                }
                 
                 auto isHidden = Interpreter.StartsWithCommandWord!("HIDE")(remainingCommand, remainingCommand);
                 
@@ -1052,8 +1073,9 @@ public final class Interpreter
         
         this(string fullCommand, int offset)
         {
-            ExecutedCommands           = fullCommand[0 .. offset];
-            TrailingIncompleteCommands = fullCommand[offset .. $];
+            auto utf8 = fullCommand.toUtf8Slice;
+            ExecutedCommands           = utf8[0 .. offset];
+            TrailingIncompleteCommands = utf8[offset .. $];
         }
     }
     
@@ -1078,14 +1100,15 @@ public final class Interpreter
         auto isNewLine = false;  // Is currentIndex immediately after a newline? 
         auto isInMultiLineCommand = false;
         auto isStartOfCommand = true;
+        const fullCommandTextUtf32 = fullCommandText.to!dstring;
         
         int newLineCharacterCount()
         {
-            if (fullCommandText[currentIndex] == '\n')
+            if (fullCommandTextUtf32[currentIndex] == '\n')
                 return 1;
             
-            if (fullCommandText[currentIndex]     == '\r' && currentIndex + 1 < fullCommandText.length && 
-                fullCommandText[currentIndex + 1] == '\n')
+            if (fullCommandTextUtf32[currentIndex]     == '\r' && currentIndex + 1 < fullCommandTextUtf32.length && 
+                fullCommandTextUtf32[currentIndex + 1] == '\n')
                 return 2;
             
             return 0;
@@ -1093,17 +1116,17 @@ public final class Interpreter
         
         void advance(bool isInComment = false, int numberOfCharactersToAdvance = 1)()
         {
-            if (currentIndex >= fullCommandText.length)
+            if (currentIndex >= fullCommandTextUtf32.length)
                 return;
             
             static if (!isInComment)
-                if (!fullCommandText[currentIndex].isWhite)
+                if (!fullCommandTextUtf32[currentIndex].isWhite)
                     isStartOfCommand = false;
             
             static if (numberOfCharactersToAdvance != 1)
                 scope(exit)
-                    if (currentIndex > fullCommandText.length)
-                        currentIndex = fullCommandText.intLength;
+                    if (currentIndex > fullCommandTextUtf32.length)
+                        currentIndex = fullCommandTextUtf32.intLength;
             
             auto newLineCharacters = newLineCharacterCount;
             if (newLineCharacters == 0)
@@ -1127,9 +1150,9 @@ public final class Interpreter
         void processResultAndAdvance()
         {
             advance;
-            processResult(fullCommandText[commandStart .. currentIndex], lineNumber, scriptFileQueueOffset);
+            processResult(fullCommandTextUtf32[commandStart .. currentIndex].to!string, lineNumber, scriptFileQueueOffset);
             
-            while (currentIndex < fullCommandText.length && fullCommandText[currentIndex].isWhite)
+            while (currentIndex < fullCommandTextUtf32.length && fullCommandTextUtf32[currentIndex].isWhite)
                 advance;
             
             commandStart = currentIndex;
@@ -1145,13 +1168,13 @@ public final class Interpreter
         
         bool isRestOfLineBlank()
         {
-            for (auto tempIndex = currentIndex + 1; tempIndex < fullCommandText.length; tempIndex++)
+            for (auto tempIndex = currentIndex + 1; tempIndex < fullCommandTextUtf32.length; tempIndex++)
             {
-                if (fullCommandText[tempIndex] == '\r' || 
-                    fullCommandText[tempIndex] == '\n')
+                if (fullCommandTextUtf32[tempIndex] == '\r' || 
+                    fullCommandTextUtf32[tempIndex] == '\n')
                     return true;
                 
-                if (fullCommandText[tempIndex].isWhite)
+                if (fullCommandTextUtf32[tempIndex].isWhite)
                     continue;
                 
                 return false;
@@ -1161,17 +1184,17 @@ public final class Interpreter
         }
         
         mainCommandTextLoop:
-        while (currentIndex < fullCommandText.length)
+        while (currentIndex < fullCommandTextUtf32.length)
         {
-            auto character = fullCommandText[currentIndex];
-            auto nextCharacter = currentIndex + 1 < fullCommandText.length ? fullCommandText[currentIndex + 1] : ' ';
+            auto character = fullCommandTextUtf32[currentIndex];
+            auto nextCharacter = currentIndex + 1 < fullCommandTextUtf32.length ? fullCommandTextUtf32[currentIndex + 1] : ' ';
             
             if (character == '\'')
             {
                 do
                     advance;
-                while (currentIndex < fullCommandText.length && 
-                       fullCommandText[currentIndex] != '\'');
+                while (currentIndex < fullCommandTextUtf32.length && 
+                       fullCommandTextUtf32[currentIndex] != '\'');
                 advance;
                 isStartOfCommand = false;
                 continue;
@@ -1181,8 +1204,8 @@ public final class Interpreter
             {
                 do
                     advance;
-                while (currentIndex < fullCommandText.length && 
-                       fullCommandText[currentIndex] != '\"');
+                while (currentIndex < fullCommandTextUtf32.length && 
+                       fullCommandTextUtf32[currentIndex] != '\"');
                 
                 advance;
                 continue;
@@ -1191,7 +1214,7 @@ public final class Interpreter
             if (character == '-' && nextCharacter == '-')
             {
                 advance!(true, 2);
-                while (currentIndex < fullCommandText.length && newLineCharacterCount == 0)
+                while (currentIndex < fullCommandTextUtf32.length && newLineCharacterCount == 0)
                     advance!true;
                 
                 continue;
@@ -1200,9 +1223,9 @@ public final class Interpreter
             if (character == '/' && nextCharacter == '*')
             {
                 advance!(true, 2);
-                while (currentIndex + 1 < fullCommandText.length && 
-                        !(fullCommandText[currentIndex]     == '*' && 
-                          fullCommandText[currentIndex + 1] == '/'))
+                while (currentIndex + 1 < fullCommandTextUtf32.length && 
+                        !(fullCommandTextUtf32[currentIndex]     == '*' && 
+                          fullCommandTextUtf32[currentIndex + 1] == '/'))
                 {
                     advance!true;
                 }
@@ -1211,31 +1234,33 @@ public final class Interpreter
                 continue;
             }
             
-            string remainingCommand;
-            if (StartsWithCommandWord!"BEGIN"                      (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"DECLARE"                    (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE OR REPLACE FUNCTION" (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE OR REPLACE PROCEDURE"(fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE OR REPLACE PACKAGE"  (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE OR REPLACE TRIGGER"  (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE OR REPLACE TYPE"     (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE FUNCTION"            (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE PROCEDURE"           (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE PACKAGE"             (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE TRIGGER"             (fullCommandText[currentIndex .. $], remainingCommand) || 
-                StartsWithCommandWord!"CREATE TYPE"                (fullCommandText[currentIndex .. $], remainingCommand))
+            dstring remainingCommand;
+            if (StartsWithCommandWord!"BEGIN"                      (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"DECLARE"                    (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE OR REPLACE FUNCTION" (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE OR REPLACE PROCEDURE"(fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE OR REPLACE PACKAGE"  (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE OR REPLACE TRIGGER"  (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE OR REPLACE TYPE"     (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE FUNCTION"            (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE PROCEDURE"           (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE PACKAGE"             (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE TRIGGER"             (fullCommandTextUtf32[currentIndex .. $], remainingCommand) || 
+                StartsWithCommandWord!"CREATE TYPE"                (fullCommandTextUtf32[currentIndex .. $], remainingCommand))
             {
-                currentIndex = fullCommandText.intLength - remainingCommand.intLength;
-                while (currentIndex < fullCommandText.length)
+                auto blockTerminatorCharacterUtf32 = Settings.BlockTerminatorCharacter.to!dstring;
+            
+                currentIndex = fullCommandTextUtf32.intLength - remainingCommand.intLength;
+                while (currentIndex < fullCommandTextUtf32.length)
                 {
                     if (Settings.BlockTerminatorCharacterEnabled &&
                         isNewLine && 
-                        currentIndex + Settings.BlockTerminatorCharacter.length < fullCommandText.length && 
-                        fullCommandText[currentIndex .. currentIndex + Settings.BlockTerminatorCharacter.length] == Settings.BlockTerminatorCharacter && 
+                        currentIndex + blockTerminatorCharacterUtf32.length < fullCommandTextUtf32.length && 
+                        fullCommandTextUtf32[currentIndex .. currentIndex + blockTerminatorCharacterUtf32.length] == blockTerminatorCharacterUtf32 && 
                         isRestOfLineBlank)
                     {
                         // This is a cancelled query, ignore the current statement and the rest of this line.
-                        while (currentIndex < fullCommandText.length && newLineCharacterCount == 0)
+                        while (currentIndex < fullCommandTextUtf32.length && newLineCharacterCount == 0)
                             advance;
                         
                         advance;
@@ -1244,7 +1269,7 @@ public final class Interpreter
                         continue mainCommandTextLoop;
                     }
                     
-                    if (isNewLine && fullCommandText[currentIndex] == '/' && isRestOfLineBlank)
+                    if (isNewLine && fullCommandTextUtf32[currentIndex] == '/' && isRestOfLineBlank)
                     {
                         processResultAndAdvance;
                         continue mainCommandTextLoop;
@@ -1270,7 +1295,7 @@ public final class Interpreter
             
             if (!isInMultiLineCommand &&
                 isStartOfCommand && 
-                IsMultiLineCommand(fullCommandText[currentIndex .. $]))
+                IsMultiLineCommand(fullCommandTextUtf32[currentIndex .. $]))
             {
                 isInMultiLineCommand = true;
                 advance;
@@ -1280,16 +1305,16 @@ public final class Interpreter
             advance;
         }
         
-        if (commandStart < fullCommandText.length)
+        if (commandStart < fullCommandTextUtf32.length)
         {
             static if (commandSource == CommandSource.User)
-                if (IsMultiLineCommand(fullCommandText[commandStart .. $]))
+                if (IsMultiLineCommand(fullCommandTextUtf32[commandStart .. $]))
                     return ExecuteCommandResult(fullCommandText, commandStart);
             
             processResultAndAdvance;
         }
         
-        return ExecuteCommandResult(fullCommandText, fullCommandText.intLength);
+        return ExecuteCommandResult(fullCommandText, fullCommandTextUtf32.intLength);
     }
     
     unittest
@@ -1447,7 +1472,7 @@ public final class Interpreter
         catch (RecoverableException exception)
         {
             Program.Buffer.AddText(exception.msg);
-            return ExecuteCommandResult(fullCommandText, fullCommandText.intLength);
+            return ExecuteCommandResult(fullCommandText, fullCommandText.toUtf8Slice.intLength);
         }
     }
 }
@@ -1463,7 +1488,7 @@ bool IsOracleIdentifierCharacter(
     ValidateCase  caseMode  = ValidateCase.Either, 
     ValidateDot   dotMode   = ValidateDot.AllowDot, 
     ValidateQuote quoteMode = ValidateQuote.SimpleIdentifierOnly)
-    (const char c) pure @nogc nothrow
+    (const dchar c) pure @nogc nothrow
 {
     if (c == '_' || c == '$' || c == '#' || (dotMode == ValidateDot.AllowDot && c == '.') || (quoteMode == ValidateQuote.AllowQuote && c == '"'))
         return true;
@@ -1471,16 +1496,7 @@ bool IsOracleIdentifierCharacter(
     static if (caseMode == ValidateCase.Either)
         return c.isAlphaNum;
     else
-        return c.isUpper || c.isDigit;
-}
-
-bool IsOracleIdentifierCharacter(
-    ValidateCase  caseMode  = ValidateCase.Either, 
-    ValidateDot   dotMode   = ValidateDot.AllowDot, 
-    ValidateQuote quoteMode = ValidateQuote.SimpleIdentifierOnly)
-    (const dchar c) pure @nogc nothrow
-{
-    return IsOracleIdentifierCharacter!(caseMode, dotMode, quoteMode)(cast(char)c);
+        return c.isUpper || c.isNumber;
 }
 
 bool IsOracleIdentifier(string token) pure @nogc nothrow

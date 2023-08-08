@@ -3,14 +3,16 @@ module buffer;
 import std.stdio : File;
 import std.array: array;
 import std.algorithm : max, min, find, countUntil;
-import std.ascii : isWhite;
 import std.conv : to;
 import std.range : appender, retro;
 import std.string : lineSplitter, endsWith, strip, toUpper, lineSplitter;
 import std.typecons : tuple;
+import std.uni : isWhite, isAlphaNum;
+import std.utf : byDchar;
 
 import program;
 import range_extensions;
+import utf8_slice;
 
 public static class MemorySettings
 {
@@ -49,19 +51,18 @@ public final class Buffer
     
     // The end of the linked list.
     private EditorBufferItem editorItem;
-    public auto EditorItem() @nogc nothrow { return editorItem; }
+    public auto EditorItem() @nogc nothrow => editorItem;
     
     // Where has the screen been scrolled to?  This is the first item
     // visible.  However, it may not be fully visible (the top
     // and/or bottom could be hidden).
     private auto screenFirstIndex = 0;
-    public BufferItem ScreenFirst() @nogc nothrow { return items[screenFirstIndex]; }
+    public BufferItem ScreenFirst() @nogc nothrow => items[screenFirstIndex];
     
     // This is the portion of the first screen item than cannot be seen 
     // off the top of the screen.
     private auto screenFirst_LineNumberOffset = 0;
-    public auto ScreenFirst_LineNumberOffset() @nogc nothrow { return screenFirst_LineNumberOffset; }
-    
+    public auto ScreenFirst_LineNumberOffset() @nogc nothrow => screenFirst_LineNumberOffset;
     
     public this(EditorBufferItem editor)
     {
@@ -74,7 +75,7 @@ public final class Buffer
     }
     
     private File spoolFile;
-    public auto IsSpooling() nothrow { return spoolFile.isOpen; }
+    public auto IsSpooling() nothrow => spoolFile.isOpen;
     
     public void StartSpooling(string filename)
     {
@@ -183,25 +184,23 @@ public final class Buffer
     // This is the total characters to the left of the screen when 
     // the screen has been scrolled to the right.
     private auto horizontalCharacterCountOffset = 0;
-    public auto HorizontalCharacterCountOffset() const @nogc nothrow { return horizontalCharacterCountOffset; }
+    public auto HorizontalCharacterCountOffset() const @nogc nothrow => horizontalCharacterCountOffset;
     
     // This is the total horizontal character count.
     private auto widthInCharacters = 0;
-    public auto WidthInCharacters() const @nogc nothrow
-    { 
-        return max(
+    public auto WidthInCharacters() const @nogc nothrow =>
+        max(
             widthInCharacters, 
             (activeTableItem is null ? 0 : activeTableItem.WidthInCharacters), 
             editorItem.WidthInCharacters);
-    }
     
     // These are populated with the screen portal dimensions.
     private auto screenHeightInLines = 0;
-    public auto ScreenHeightInLines() const @nogc nothrow { return screenHeightInLines; }
+    public auto ScreenHeightInLines() const @nogc nothrow => screenHeightInLines;
     public void ScreenHeightInLines(const int value) @nogc nothrow { screenHeightInLines = value; }
     
     private auto screenWidthInCharacters = 0;
-    public auto ScreenWidthInCharacters() const @nogc nothrow { return screenWidthInCharacters; }
+    public auto ScreenWidthInCharacters() const @nogc nothrow => screenWidthInCharacters;
     public void ScreenWidthInCharacters(const int value) @nogc nothrow { screenWidthInCharacters = value; }
     
     public void BalanceExtraColumnSpace() @nogc nothrow
@@ -240,12 +239,12 @@ public final class Buffer
     private int selectionFindColumnMatchStart;
     private int selectionFindColumnMatchEnd;
     
-    public auto SelectionType() const { return selectionType; }
+    public auto SelectionType() const => selectionType;
     public auto SelectionType(SelectionTypes value) { selectionType = value; }
     
-    public auto SelectionTopIndex() const { return min(selectionStartIndex, selectionEndIndex); }
+    public auto SelectionTopIndex() const => min(selectionStartIndex, selectionEndIndex);
     
-    public auto SelectionBottomIndex() const { return max(selectionStartIndex, selectionEndIndex); }
+    public auto SelectionBottomIndex() const => max(selectionStartIndex, selectionEndIndex);
     
     public auto SelectionTopLine() const 
     {
@@ -269,19 +268,15 @@ public final class Buffer
         return max(selectionStartLine, selectionEndLine); 
     }
     
-    public auto SelectionLeft() const { return min(selectionStartLeftColumn, selectionEndLeftColumn); }
+    public auto SelectionLeft() const => min(selectionStartLeftColumn, selectionEndLeftColumn);
     
-    public auto SelectionRight() const { return max(selectionStartRightColumn, selectionEndRightColumn); }
+    public auto SelectionRight() const => max(selectionStartRightColumn, selectionEndRightColumn);
     
-    public auto SelectionLeftScreen() const 
-    {
-        return max(0, min(screenWidthInCharacters, SelectionLeft - horizontalCharacterCountOffset)); 
-    }
+    public auto SelectionLeftScreen() const =>
+        max(0, min(screenWidthInCharacters, SelectionLeft - horizontalCharacterCountOffset)); 
     
-    public auto SelectionRightScreen() const
-    {
-        return max(0, min(screenWidthInCharacters, SelectionRight - horizontalCharacterCountOffset)); 
-    }
+    public auto SelectionRightScreen() const =>
+        max(0, min(screenWidthInCharacters, SelectionRight - horizontalCharacterCountOffset)); 
     
     public struct Location
     {
@@ -340,8 +335,8 @@ public final class Buffer
         Program.Screen.Invalidate;
         
         selectionOverrideText = overrideText;
-        selectionStartIndex  = selectionEndIndex  = itemIndex;
-        selectionStartLine   = selectionEndLine   = line;
+        selectionStartIndex   = selectionEndIndex = itemIndex;
+        selectionStartLine    = selectionEndLine  = line;
         
         selectionStartLeftColumn  = left;
         selectionStartRightColumn = right;
@@ -475,9 +470,7 @@ public final class Buffer
         
         CharacterType characterTypeAt(const StringReference text, const int index)
         {
-            import std.ascii;
-            
-            auto character = text[index];
+            auto character = text.toUtf8Slice[index];
             
             if (character == ' ')
                 return CharacterType.Space;
@@ -507,10 +500,10 @@ public final class Buffer
         else
         {
             text = location.Item.TextAt(location.Line, 0, BufferItem.MaxTemporaryTextWidth, screenLine);
-            rightCutOff = text.intLength;
+            rightCutOff = text.toUtf8Slice.intLength;
         }
         
-        if (absoluteColumn >= text.length)
+        if (absoluteColumn >= text.toUtf8Slice.length)
             return WordPosition("", screenColumn, screenColumn + 1, true);
         
         immutable characterTypeUnderMouse = characterTypeAt(text, absoluteColumn);
@@ -530,7 +523,7 @@ public final class Buffer
         int end = absoluteColumn + 1;
         while (true)
         {
-            if (end >= text.intLength)
+            if (end >= text.toUtf8Slice.intLength)
                 break;
             
             if (characterTypeAt(text, end) != characterTypeUnderMouse)
@@ -539,7 +532,7 @@ public final class Buffer
             end++;
         }
         
-        return WordPosition(text[start .. end].to!string, start - horizontalCharacterCountOffset, min(end, rightCutOff) - horizontalCharacterCountOffset, characterTypeUnderMouse == CharacterType.Space);
+        return WordPosition(text.toUtf8Slice[start .. end].to!string, start - horizontalCharacterCountOffset, min(end, rightCutOff) - horizontalCharacterCountOffset, characterTypeUnderMouse == CharacterType.Space);
     }
     
     public void SelectWholeWordAt(const int screenLine, const int screenColumn)
@@ -630,7 +623,7 @@ public final class Buffer
         {
             const text = items[topIndex].TextAt(topLine, left, width, fakeScreenLine);
             
-            if (selectionOverrideText.length > width && selectionOverrideText[0 .. width] == text)
+            if (selectionOverrideText.toUtf8Slice.length > width && selectionOverrideText.toUtf8Slice[0 .. width] == text)
                 return selectionOverrideText;
             else
                 return text.to!string;
@@ -688,12 +681,10 @@ public final class Buffer
         InvalidateScrollbarMap;
     }
     
-    public void AddBlankLine()
-    {
+    public void AddBlankLine() =>
         Add(new BufferItem);
-    }
     
-    public void AddText(bool includeTrailingBlankLine = true)(immutable(string)[] lines)
+    public void AddText(bool includeTrailingBlankLine = true)(string[] lines)
     {
         foreach (line; lines)
             Add(new SimpleTextBufferItem(line));
@@ -720,29 +711,25 @@ public final class Buffer
             AddBlankLine;
     }
     
-    public void AddText(string text, NamedColor color)
-    {
+    public void AddText(string text, NamedColor color) =>
         AddText(text, color, color == NamedColor.Normal ? FontStyle.Normal : FontStyle.Bold);
-    }
 
-    public void AddText(string text, FontStyle style)
-    {
+    public void AddText(string text, FontStyle style) =>
         AddText(text, NamedColor.Normal, style);
-    }
     
-    public void AddTextWithPrompt(immutable(string) prompt, immutable(string) text)
+    public void AddTextWithPrompt(string prompt, string text)
     {
         string fullText;
         
         FormattedText.Span[] spans;
         fullText = prompt ~ text;
         spans ~= FormattedText.Span(fullText[0 .. prompt.length], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptOpacity);
-        spans ~= FormattedText.Span(fullText[prompt.length .. $], prompt.intLength, NamedColor.Normal, FontStyle.Normal, 255);
+        spans ~= FormattedText.Span(fullText[prompt.length .. $], prompt.toUtf8Slice.intLength, NamedColor.Normal, FontStyle.Normal, 255);
         
         AddFormattedText(FormattedText(fullText, spans));
     }
     
-    public void AddTextWithPrompt(immutable(string) text)
+    public void AddTextWithPrompt(string text)
     {
         auto lineNumber = 0;
         foreach (line; text.lineSplitter)
@@ -756,25 +743,23 @@ public final class Buffer
             if (lineNumber == 0)
             {
                 fullText = (Program.Editor.Prompt ~ line).to!string;
-                spans ~= FormattedText.Span(fullText[0 .. indentation], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptOpacity);
+                spans ~= FormattedText.Span(fullText.toUtf8Slice[0 .. indentation], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptOpacity);
             }
             else
             {
                 fullText = (Program.Editor.IndentationSpace(lineNumber) ~ line).to!string;
-                spans ~= FormattedText.Span(fullText[0 .. indentation], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptNumbersOpacity);
+                spans ~= FormattedText.Span(fullText.toUtf8Slice[0 .. indentation], 0, NamedColor.Normal, FontStyle.Normal, Program.Settings.PromptNumbersOpacity);
             }
             
-            spans ~= FormattedText.Span(fullText[indentation .. $], indentation, NamedColor.Normal, FontStyle.Normal, 255);
+            spans ~= FormattedText.Span(fullText.toUtf8Slice[indentation .. $], indentation, NamedColor.Normal, FontStyle.Normal, 255);
             lineNumber++;
             
             AddFormattedText(FormattedText(fullText, spans));
         }
     }
     
-    public void AddFormattedText(FormattedText formattedText)
-    {
+    public void AddFormattedText(FormattedText formattedText) =>
         Add(new FormattedTextBufferItem(formattedText));
-    }
     
     public void AddTextWithPrompt(FormattedText[] formattedLines)
     {
@@ -798,8 +783,8 @@ public final class Buffer
             foreach (span; formattedLine.Spans)
             {
                 const start = Program.Editor.Indentation + span.StartColumn;
-                const end = start + span.Text.intLength;
-                spans ~= FormattedText.Span(text[start .. end], start, span.Color, span.Style, span.Opacity);
+                const end = start + span.Text.toUtf8Slice.intLength;
+                spans ~= FormattedText.Span(text.toUtf8Slice[start .. end], start, span.Color, span.Style, span.Opacity);
             }
             
             AddFormattedText(FormattedText(text, spans));
@@ -812,10 +797,8 @@ public final class Buffer
             AddFormattedText(line);
     }
     
-    public void AddColumns(OracleColumns columns)
-    {
+    public void AddColumns(OracleColumns columns) =>
         Add(new TableBufferItem(columns));
-    }
     
     public void AddRecord(OracleRecord fields)
     {
@@ -875,15 +858,15 @@ public final class Buffer
             {
                 FormattedText.Span[] newSpans;
                 foreach (span; line.Spans)
-                    if (span.StartColumn + span.Text.intLength <= offset)
+                    if (span.StartColumn + span.Text.toUtf8Slice.intLength <= offset)
                         newSpans ~= span;
                     else if (span.StartColumn >= offset)
                         newSpans ~= FormattedText.Span(span.Text, span.StartColumn, NamedColor.Error, FontStyle.Bold, 255);
                     else
                     {
                         const wordEnd = offset - span.StartColumn;
-                        newSpans ~= FormattedText.Span(span.Text[0 .. wordEnd], span.StartColumn, span.Color, span.Style, span.Opacity);
-                        newSpans ~= FormattedText.Span(span.Text[wordEnd .. $], span.StartColumn + wordEnd, NamedColor.Error, FontStyle.Bold, 255);
+                        newSpans ~= FormattedText.Span(span.Text.toUtf8Slice[0 .. wordEnd], span.StartColumn, span.Color, span.Style, span.Opacity);
+                        newSpans ~= FormattedText.Span(span.Text.toUtf8Slice[wordEnd .. $], span.StartColumn + wordEnd, NamedColor.Error, FontStyle.Bold, 255);
                     }
                 
                 AddFormattedText(FormattedText(line.Text, newSpans));
@@ -932,7 +915,6 @@ public final class Buffer
                 
             uncommittedResultItems = [];
         }
-        
         
         if (!Program.Settings.IsFeedbackOn)
             return;
@@ -1351,7 +1333,6 @@ public final class Buffer
         
         assert (scrollbarHeight >= 0, "Vertical scrollbar height cannot be negative: " ~ scrollbarHeight.to!string);
         
-        
         immutable characterHeight = scrollbarHeight / cast(double)lineCount;
         immutable characterWidth  = scrollbarWidth  / cast(double)mapWidthInCharacters;
         immutable headerColor = Program.Screen.LookupNamedColor(NamedColor.HeaderUnderline, 0).pixelValue;
@@ -1403,7 +1384,7 @@ public final class Buffer
             {
                 int characterPosition = startInCharacters;
                 
-                foreach (character; text)
+                foreach (character; text.byDchar)
                 {
                     scope (exit) characterPosition++;
                 

@@ -11,27 +11,26 @@ import std.string : lineSplitter, lastIndexOf, toUpper, replace;
 import std.sumtype : match;
 import std.traits : ReturnType;
 import std.typecons : Tuple, tuple, Nullable, nullable;
+import std.utf : byDchar;
 import core.memory : GC;
 
 import program;
 import range_extensions;
+import utf8_slice;
 
 public class BufferItem
 {
-    public FontStyle Style() const @nogc nothrow { return FontStyle.Normal; }
-    public NamedColor Color() const @nogc nothrow { return NamedColor.Normal; }
-    public int LineCount() const @nogc nothrow { return 1; }
-    public int WidthInCharacters() const @nogc nothrow { return 1; }
-    public size_t IndicativeTotalSize() const @nogc nothrow { return __traits(classInstanceSize, BufferItem); }
-    public string CopyWholeItem() const { return ""; }
+    public FontStyle Style() const @nogc nothrow => FontStyle.Normal;
+    public NamedColor Color() const @nogc nothrow => NamedColor.Normal;
+    public int LineCount() const @nogc nothrow => 1;
+    public int WidthInCharacters() const @nogc nothrow => 1;
+    public size_t IndicativeTotalSize() const @nogc nothrow => __traits(classInstanceSize, BufferItem);
+    public string CopyWholeItem() const => "";
     public enum MaxTemporaryTextWidth = 4096;
     
-    public void Free() 
-    { 
-        GC.free(cast(void*)this);
-    }
+    public void Free() => GC.free(cast(void*)this);
     
-    public const (char)[] TextAt(const int lineNumber, const int start, const int width, const int screenLine) const { return ""; }
+    public const (char)[] TextAt(const int lineNumber, const int start, const int width, const int screenLine) const => "";
     
     public string FindNextInLine(
         const string searchTextUpperCase, 
@@ -45,17 +44,17 @@ public class BufferItem
         matchColumn = -1;
         columnMatchStart = 0;
         columnMatchEnd = 0;
-        int textLength;
         
         const currentText = TextAt(lineNumber, matchStart, WidthInCharacters, -1);
         
-        auto matchOffset = currentText.toUpper.countUntil(searchTextUpperCase);
+        auto searchTextUpperCaseUtf32 = searchTextUpperCase.to!dstring;
+        auto matchOffset = currentText.toUpper.byDchar.countUntil(searchTextUpperCaseUtf32);
         if (matchOffset < 0)
             return "";
         
         matchStart += matchOffset;
-        matchEnd = matchStart + searchTextUpperCase.intLength;
-        return currentText[matchOffset .. matchOffset + searchTextUpperCase.length].array.to!string;
+        matchEnd = matchStart + searchTextUpperCaseUtf32.intLength;
+        return currentText.toUtf8Slice[matchOffset .. matchOffset + searchTextUpperCaseUtf32.length].to!string;
     }
     
     public string FindPreviousInLine(
@@ -70,26 +69,27 @@ public class BufferItem
         matchColumn = -1;
         columnMatchStart = 0;
         columnMatchEnd = 0;
-        int textLength;
         
         const currentText = TextAt(lineNumber, 0, matchEnd, -1);
         
-        auto matchOffset = cast(int)currentText.toUpper.retro.countUntil(searchTextUpperCase.retro);
+        auto searchTextUpperCaseUtf32 = searchTextUpperCase.to!dstring;
+        auto matchOffset = cast(int)currentText.toUpper.byDchar.retro.countUntil(searchTextUpperCaseUtf32.retro);
         if (matchOffset < 0)
             return "";
         
-        matchEnd = currentText.intLength - matchOffset;
-        matchStart = matchEnd - searchTextUpperCase.intLength;
-        return currentText[matchStart .. matchEnd].array.to!string;
+        matchEnd = currentText.toUtf8Slice.intLength - matchOffset;
+        matchStart = matchEnd - searchTextUpperCaseUtf32.intLength;
+        return currentText.toUtf8Slice[matchStart .. matchEnd].array.to!string;
     }
 }
 
 public class SimpleTextBufferItem : BufferItem
 {
     protected immutable string text;
-    public override int WidthInCharacters() const { return text.intLength; }
-    public override size_t IndicativeTotalSize() const { return super.IndicativeTotalSize + text.intLength * 2; }
-    public override string CopyWholeItem() const { return text; }
+    protected immutable int widthInCharacters;
+    public override int WidthInCharacters() const => widthInCharacters;
+    public override size_t IndicativeTotalSize() const => super.IndicativeTotalSize + text.intLength * 2;
+    public override string CopyWholeItem() const => text;
     
     public override void Free()
     {
@@ -102,15 +102,16 @@ public class SimpleTextBufferItem : BufferItem
         if (lineNumber > 0)
             return "";
         
-        if (start >= text.length)
+        if (start >= widthInCharacters)
             return "";
         
-        return text[start .. min(start + width, $)];
+        return text.toUtf8Slice[start .. min(start + width, widthInCharacters)];
     }
     
     this(StringReference text)
     {
         this.text = text.to!string;
+        widthInCharacters = text.toUtf8Slice.intLength;
         Program.Buffer.Spool(this.text);
     }
 }
@@ -120,9 +121,9 @@ public final class FormattedTextBufferItem : SimpleTextBufferItem
     public FormattedText Formatting;
     
     private auto showFormatting = FormattingMode.Apply;
-    public auto ShowFormatting() const { return showFormatting; }
+    public auto ShowFormatting() const => showFormatting;
     public void ShowFormatting(FormattingMode value) { showFormatting = value; }
-    public override size_t IndicativeTotalSize() const { return super.IndicativeTotalSize + Formatting.Spans.intLength * cast(int)FormattedText.Span.sizeof; }
+    public override size_t IndicativeTotalSize() const => super.IndicativeTotalSize + Formatting.Spans.intLength * cast(int)FormattedText.Span.sizeof;
     
     public this(StringReference text) 
     { 
@@ -145,8 +146,8 @@ public final class FormattedTextBufferItem : SimpleTextBufferItem
     public void Add(const int startColumn, const int width, const NamedColor color = NamedColor.Normal, const FontStyle style = FontStyle.Normal, const ubyte opacity = 255)
     {
         assert(startColumn >= 0, "FormattedText startColumn must be positive.");
-        assert(startColumn + width <= text.length, "FormattedText span must exist within the source text.");
-        Formatting.Spans ~= FormattedText.Span(text[startColumn .. startColumn + width], startColumn, color, style, opacity);
+        assert(startColumn + width <= widthInCharacters, "FormattedText span must exist within the source text.");
+        Formatting.Spans ~= FormattedText.Span(text.toUtf8Slice[startColumn .. startColumn + width], startColumn, color, style, opacity);
     }
     
     public override void Free()
@@ -166,7 +167,7 @@ public final class FormattedTextBufferItem : SimpleTextBufferItem
         foreach (span; Formatting.Spans)
         {
             const textStart = max(start,         span.StartColumn);
-            const textEnd   = min(start + width, span.StartColumn + span.Text.intLength);
+            const textEnd   = min(start + width, span.StartColumn + span.Text.toUtf8Slice.intLength);
             
             if (textStart >= textEnd)
                 continue;
@@ -181,7 +182,7 @@ public final class FormattedTextBufferItem : SimpleTextBufferItem
                 case Disabled: color = NamedColor.Disabled; style = FontStyle.Normal; break;
             }
             
-            spans[spanCount] = FormattedText.Span(text[textStart .. textEnd], textStart - start, color, style, span.Opacity);
+            spans[spanCount] = FormattedText.Span(text.toUtf8Slice[textStart .. textEnd], textStart - start, color, style, span.Opacity);
             spanCount++;
             
             if (spanCount >= spans.length)
@@ -189,7 +190,7 @@ public final class FormattedTextBufferItem : SimpleTextBufferItem
                 // Patch up the last entry so the formatting may be lost, but the text isn't.
                 const oldStart = spans[$ - 1].StartColumn;
                 const left = oldStart + start;
-                spans[$ - 1] = FormattedText.Span(text[left .. $], oldStart, NamedColor.Normal, FontStyle.Normal, 255);
+                spans[$ - 1] = FormattedText.Span(text.toUtf8Slice[left .. $], oldStart, NamedColor.Normal, FontStyle.Normal, 255);
                 return spans;
             }
         }
@@ -282,10 +283,10 @@ public final class TableBufferItem : BufferItem
     private auto discardedLineCount = 0;
     private OracleRecord lastRecord;
     
-    public auto TotalRecordCount() const { return totalRecordCount; }
+    public auto TotalRecordCount() const => totalRecordCount;
     
     private OracleColumns columns;
-    public auto Columns() const @nogc nothrow { return columns; }
+    public auto Columns() const @nogc nothrow => columns;
     
     public UserDefinedColumn[] UserColumns;
     
@@ -295,19 +296,24 @@ public final class TableBufferItem : BufferItem
         int Max;
         int Extra;
         
-        int CurrentWidth() const pure @nogc nothrow { return Min + Extra; }
+        int CurrentWidth() const pure @nogc nothrow => Min + Extra;
         
         this(string headerName)
         {
             Min = 1;
-            Max = headerName.intLength;
+            Max = headerName.toUtf8Slice.intLength;
             Extra = 0;
         }
     }
     
     private ColumnDimension[] columnWidths;
-    public auto ColumnWidth(bool isSpooling = false, int padding = 0)(const size_t columnIndex) const pure @nogc nothrow
+    public auto ColumnWidth(bool isSpooling = false, bool includePadding = false)(const size_t columnIndex) const @nogc nothrow
     {
+        static if (includePadding)
+            const padding = Program.Settings.ColumnSeparatorDString.length;
+        else
+            enum padding = 0;
+        
         auto userColumn = UserColumns[columnIndex];
         
         if (userColumn !is null &&
@@ -340,7 +346,7 @@ public final class TableBufferItem : BufferItem
         
         // This change applies if...
         return userColumn is null ||    // There is no overriding user column, or:
-              !userColumn.IsEnabled ||  // There is a column, bit it's disabled, or:
+              !userColumn.IsEnabled ||  // There is a column, but it's disabled, or:
               (userColumn.IsVisible && userColumn.Width < 0);  // The column is visible but with no size set.
     }
     
@@ -355,15 +361,20 @@ public final class TableBufferItem : BufferItem
             auto columnWidth = &columnWidths[$ - 1];
             columnWidth.Extra = columnWidth.Max - columnWidth.Min;
             
-            widthInCharacters = 0;
-            foreach (columnIndex; 0 .. columns.intLength)
-                widthInCharacters += ColumnWidth!(false, 1)(columnIndex);
+            widthInCharacters = 1;
+            if (columns.length > 0)
+            {
+                foreach (columnIndex; 0 .. columns.length - 1)
+                    widthInCharacters += ColumnWidth!(false, true)(columnIndex);
+                
+                widthInCharacters += ColumnWidth!(false)(columns.length - 1);
+            }
         }
         
         auto takenWidth = 0;
         foreach (ref columnWidth; columnWidths)
         {
-            takenWidth += columnWidth.Min + Program.Settings.ColumnSeparator.intLength;
+            takenWidth += columnWidth.Min + Program.Settings.ColumnSeparatorDString.intLength;
             columnWidth.Extra = 0;
         }
         
@@ -506,7 +517,7 @@ public final class TableBufferItem : BufferItem
                 
                 lines ~= Line(null, newRecord);
                 
-                columnWidthChanged |= UpdateObservedColumnWidth(labelIndex, currentCompute.Label.intLength);
+                columnWidthChanged |= UpdateObservedColumnWidth(labelIndex, currentCompute.Label.toUtf8Slice.intLength);
                 
                 previousLabel = currentCompute.Label;
             }
@@ -516,7 +527,7 @@ public final class TableBufferItem : BufferItem
             newRecord[currentCompute.ValueColumnIndex] = field;
             
             auto text = FieldToString!(WidthMode.Unrestricted)(currentCompute.ValueColumnIndex, field);
-            columnWidthChanged |= UpdateObservedColumnWidth(currentCompute.ValueColumnIndex, text.intLength);
+            columnWidthChanged |= UpdateObservedColumnWidth(currentCompute.ValueColumnIndex, text.toUtf8Slice.intLength);
             
             currentCompute.Computer.Clear;
         }
@@ -548,7 +559,6 @@ public final class TableBufferItem : BufferItem
             .map!(oracleColumn => ColumnDimension(oracleColumn.Name))
             .array;
         
-        
         this.UserColumns = 
             columns
             .map!(oracleColumn => UserDefinedColumn.Columns.get(oracleColumn.Name, null))
@@ -579,7 +589,7 @@ public final class TableBufferItem : BufferItem
     }
     
     private size_t indicativeTotalSize = __traits(classInstanceSize, TableBufferItem);
-    public override size_t IndicativeTotalSize() const @nogc nothrow { return indicativeTotalSize; }
+    public override size_t IndicativeTotalSize() const @nogc nothrow => indicativeTotalSize;
     
     private static auto RecordSize(OracleRecord fields)
     {
@@ -690,7 +700,7 @@ public final class TableBufferItem : BufferItem
         foreach (columnIndex, column; columns)
         {
             auto text = FieldToString!(WidthMode.Unrestricted)(columnIndex, record[columnIndex]);
-            columnWidthChanged |= UpdateObservedColumnWidth(columnIndex, text.intLength);
+            columnWidthChanged |= UpdateObservedColumnWidth(columnIndex, text.toUtf8Slice.intLength);
             
             auto userColumn = UserColumns[columnIndex];
             if (userColumn !is null && userColumn.IsEnabled)
@@ -745,10 +755,10 @@ public final class TableBufferItem : BufferItem
         Spool;
     }
     
-    public override int LineCount() const { return lines.intLength - pendingDiscardLineCount; }
+    public override int LineCount() const => lines.intLength - pendingDiscardLineCount;
     
     private auto widthInCharacters = 0;
-    public override int WidthInCharacters() const { return widthInCharacters; }
+    public override int WidthInCharacters() const => widthInCharacters;
     
     private void TrimLinesPendingDiscard()
     {
@@ -780,9 +790,9 @@ public final class TableBufferItem : BufferItem
         super.Free;
     }
     
-    public bool IsHeaderRow(const int lineNumber) const { return lines[lineNumber].Type == Line.Types.Heading; }
+    public bool IsHeaderRow(const int lineNumber) const => lines[lineNumber].Type == Line.Types.Heading;
     
-    public bool IsTextRow(const int lineNumber) const { return lines[lineNumber].Type == Line.Types.Text; }
+    public bool IsTextRow(const int lineNumber) const => lines[lineNumber].Type == Line.Types.Text;
     
     public override const (char)[] TextAt(const int lineNumber, const int start, const int width, const int screenLine) const
     {
@@ -790,44 +800,43 @@ public final class TableBufferItem : BufferItem
         int startOffset = start;
         int destinationPosition = 0;
         
-        void Append(string text, int columnWidth)
+        void Append(string text, int requiredWidth)
         {
-            if (startOffset >= columnWidth)
+            if (startOffset >= requiredWidth)
             {
-                startOffset -= columnWidth;
+                startOffset -= requiredWidth;
                 return;
             }
             
-            int end = min(columnWidth - startOffset, destination.intLength - destinationPosition);
-            if (end <= 0)
-                return;
+            const textLength = text.toUtf8Slice.length;
             
-            if (startOffset >= text.length)
+            if (startOffset > 0)
             {
-                destination[destinationPosition .. destinationPosition + end] = ' ';
-                destinationPosition += end;
-                startOffset = 0;
-            }
-            else
-            {
-                text = text[startOffset .. $];
+                auto oldStartOffset = startOffset;
                 startOffset = 0;
                 
-                if (end <= text.length)
-                {
-                    destination[destinationPosition .. destinationPosition + end] = text[0 .. end];
-                    destinationPosition += end;
-                }
+                if (textLength <= oldStartOffset)
+                    Append("", requiredWidth - oldStartOffset);
                 else
-                {
-                    destination[destinationPosition .. destinationPosition + text.intLength] = text;
-                    destinationPosition += text.intLength;
-                    
-                    int length = end - text.intLength;
-                    destination[destinationPosition .. destinationPosition + length] = ' ';
-                    destinationPosition += length;
-                }
+                    Append(text.toUtf8Slice[oldStartOffset .. $], requiredWidth - oldStartOffset);
+                
+                return;
             }
+            
+            text = text.toUtf8Slice[0 .. min(textLength, requiredWidth)];
+            
+            auto newDestinationPosition = min(destination.intLength, destinationPosition + text.intLength);
+            destination[destinationPosition .. newDestinationPosition] = text[0 .. (newDestinationPosition - destinationPosition)];
+            destinationPosition = newDestinationPosition;
+            
+            requiredWidth -= text.toUtf8Slice.intLength;
+            
+            if (requiredWidth <= 0)
+                return;
+            
+            newDestinationPosition = min(destination.intLength, destinationPosition + requiredWidth);
+            destination[destinationPosition .. newDestinationPosition] = ' ';
+            destinationPosition = newDestinationPosition;
         }
         
         auto line = lines[lineNumber];
@@ -837,7 +846,7 @@ public final class TableBufferItem : BufferItem
         {
             foreach (columnIndex, column; columns)
             {
-                if (destinationPosition >= width)
+                if (destination[0 .. destinationPosition].toUtf8Slice.length >= width)
                     break;
                 
                 Append(HeadingAt(columnIndex), ColumnWidth(columnIndex));
@@ -847,7 +856,7 @@ public final class TableBufferItem : BufferItem
                     auto userColumn = UserColumns[columnIndex];
                     
                     if (userColumn is null || !userColumn.IsEnabled || userColumn.IsVisible)
-                        Append(Program.Settings.ColumnSeparator, Program.Settings.ColumnSeparator.intLength);
+                        Append(Program.Settings.ColumnSeparatorString, Program.Settings.ColumnSeparatorDString.intLength);
                 }
             }
         }
@@ -864,7 +873,7 @@ public final class TableBufferItem : BufferItem
                 discardedLineCountCache = tempDiscardedLineCount;
             }
             
-            const charactersToSkip = discardedRecordCountAsStringLocation[].countUntil!(c => c != ' ');
+            const charactersToSkip = (cast(const(char)[])discardedRecordCountAsStringLocation).countUntil!(c => c != ' ');
             
             return discardedRecordCountAsStringLocation[charactersToSkip .. $][0 .. min($, width)];
         }
@@ -872,15 +881,15 @@ public final class TableBufferItem : BufferItem
         {
             if (line.Type == Line.Types.Text)
             {
-                if (start > line.Text.length)
+                if (start > line.Text.toUtf8Slice.length)
                     return "";
                 
-                return line.Text[start .. min($, start + width)];
+                return line.Text.toUtf8Slice[start .. min(line.Text.toUtf8Slice.length, start + width)];
             }
             
             foreach (columnIndex, column; columns)
             {
-                if (destinationPosition >= width)
+                if (destination[0 .. destinationPosition].toUtf8Slice.length >= width)
                     break;
                 
                 Append(line.TextAt!(WidthMode.RestrictToColumn)(this, columnIndex), ColumnWidth(cast(int)columnIndex));
@@ -890,12 +899,13 @@ public final class TableBufferItem : BufferItem
                     auto userColumn = UserColumns[columnIndex];
                     
                     if (userColumn is null || !userColumn.IsEnabled || userColumn.IsVisible)
-                        Append(Program.Settings.ColumnSeparator, Program.Settings.ColumnSeparator.intLength);
+                        Append(Program.Settings.ColumnSeparatorString, Program.Settings.ColumnSeparatorDString.intLength);
                 }
             }
         }
         
-        return destination[0 .. min(width, destinationPosition)];
+        auto destinationUtf8 = destination[0 .. destinationPosition].toUtf8Slice;
+        return destinationUtf8[0 .. min(width, destinationUtf8.length)];
     }
     
     public int ColumnIndexAt(
@@ -907,7 +917,7 @@ public final class TableBufferItem : BufferItem
         foreach (columnIndex, _; columns)
         {
             columnWidth = ColumnWidth(columnIndex);
-            immutable columnEndInCharacters = columnStartInCharacters + columnWidth + Program.Settings.ColumnSeparator.intLength;
+            immutable columnEndInCharacters = columnStartInCharacters + columnWidth + Program.Settings.ColumnSeparatorDString.intLength;
             
             if (columnStartInCharacters <= columnInCharacters && columnInCharacters < columnEndInCharacters)
                 return cast(int)columnIndex;
@@ -954,48 +964,15 @@ public final class TableBufferItem : BufferItem
         int columnWidth;
         
         const text = FullColumnTextAt(lineNumber, screenLine, columnInCharacters, columnStartInCharacters, columnWidth);
-        if (text.length <= columnWidth && !text.any!(c => c == '\n'))
+        if (text.toUtf8Slice.length <= columnWidth && !text.any!(c => c == '\n'))
             return null;
         
         auto textLines = text.split('\n');
         
         foreach (textLine; textLines)
-            rolloverTextWidthInCharacters = max(rolloverTextWidthInCharacters, textLine.intLength);
+            rolloverTextWidthInCharacters = max(rolloverTextWidthInCharacters, textLine.toUtf8Slice.intLength);
         
         return textLines;
-        
-        /*
-        string[] textLines;
-        void add(string textLine)
-        {
-            textLines ~= textLine;
-            rolloverTextWidthInCharacters = max(rolloverTextWidthInCharacters, textLine.intLength);
-        }
-        
-        foreach (textLine; text.lineSplitter)
-        {
-            auto remainingLine = textLine;
-            while (remainingLine.length > 0)
-            {
-                if (remainingLine.length <= windowWidthInCharacters)
-                {
-                    add(remainingLine);
-                    break;
-                }
-                
-                auto index = lastIndexOf(remainingLine, ' ', windowWidthInCharacters);
-                if (index < 0)
-                {
-                    add(remainingLine);
-                    break;
-                }
-                
-                add(remainingLine[0 .. index]);
-                remainingLine = remainingLine[index + 1 .. $];
-            }
-        }
-        return textLines;
-        */
     }
     
     private string HeadingAt(const size_t columnIndex) const pure @nogc nothrow
@@ -1039,26 +1016,27 @@ public final class TableBufferItem : BufferItem
             const columnWidth = ColumnWidth(columnIndex);
             
             scope (exit)
-                columnStart += columnWidth + Program.Settings.ColumnSeparator.intLength;
+                columnStart += columnWidth + Program.Settings.ColumnSeparatorDString.intLength;
             
             if (columnIndex < matchColumn)
                 continue;
             
             auto fieldText = lineSource.TextAt!(WidthMode.Unrestricted)(this, columnIndex);
             
-            columnMatchStart = max(0, min(columnMatchStart, fieldText.intLength));
-            fieldText = fieldText[columnMatchStart .. $];
+            columnMatchStart = max(0, min(columnMatchStart, fieldText.toUtf8Slice.intLength));
+            fieldText = fieldText.toUtf8Slice[columnMatchStart .. $];
             
-            auto matchOffset = fieldText.toUpper.countUntil(searchTextUpperCase);
+            auto searchTextUpperCaseUtf32 = searchTextUpperCase.to!dstring;
+            auto matchOffset = fieldText.toUpper.byDchar.countUntil(searchTextUpperCaseUtf32);
             if (matchOffset >= 0)
             {
                 matchColumn = cast(int)columnIndex;
                 columnMatchStart += matchOffset;
-                columnMatchEnd = columnMatchStart + searchTextUpperCase.intLength;
+                columnMatchEnd = columnMatchStart + searchTextUpperCaseUtf32.intLength;
                 
                 matchStart = columnStart + min(columnWidth - 1, columnMatchStart);
                 matchEnd   = columnStart + min(columnWidth,     columnMatchEnd);
-                return fieldText[matchOffset .. matchOffset + searchTextUpperCase.length];
+                return fieldText.toUtf8Slice[matchOffset .. matchOffset + searchTextUpperCaseUtf32.length];
             }
             
             columnMatchStart = 0;
@@ -1096,7 +1074,7 @@ public final class TableBufferItem : BufferItem
         foreach (columnIndex, column; columns)
         {
             if (columnIndex > 0)
-                columnStart += Program.Settings.ColumnSeparator.intLength;
+                columnStart += Program.Settings.ColumnSeparatorDString.intLength;
             
             columnStart += ColumnWidth(columnIndex);
         }
@@ -1107,7 +1085,7 @@ public final class TableBufferItem : BufferItem
             columnIndex--;
          
             if (columnIndex < columns.length - 1)
-                columnStart -= Program.Settings.ColumnSeparator.intLength;
+                columnStart -= Program.Settings.ColumnSeparatorDString.intLength;
             
             const columnWidth = ColumnWidth(columnIndex);
             columnStart -= columnWidth;
@@ -1117,19 +1095,20 @@ public final class TableBufferItem : BufferItem
             
             auto fieldText = lineSource.TextAt!(WidthMode.Unrestricted)(this, columnIndex);
             
-            columnMatchEnd = max(0, min(columnMatchEnd, fieldText.intLength));
-            fieldText = fieldText[0 .. columnMatchEnd];
+            columnMatchEnd = max(0, min(columnMatchEnd, fieldText.toUtf8Slice.intLength));
+            fieldText = fieldText.toUtf8Slice[0 .. columnMatchEnd];
             
-            auto matchOffset = fieldText.toUpper.retro.countUntil(searchTextUpperCase.retro);
+            auto searchTextUpperCaseUtf32 = searchTextUpperCase.to!dstring;
+            auto matchOffset = fieldText.toUpper.byDchar.retro.countUntil(searchTextUpperCaseUtf32.retro);
             if (matchOffset >= 0)
             {
                 matchColumn = columnIndex;
                 columnMatchEnd -= matchOffset;
-                columnMatchStart = columnMatchEnd - searchTextUpperCase.intLength;
+                columnMatchStart = columnMatchEnd - searchTextUpperCaseUtf32.intLength;
                 
                 matchStart = columnStart + min(columnWidth - 1, columnMatchStart);
                 matchEnd   = columnStart + min(columnWidth,     columnMatchEnd);
-                return fieldText[columnMatchStart .. columnMatchEnd];
+                return fieldText.toUtf8Slice[columnMatchStart .. columnMatchEnd];
             }
             
             columnMatchEnd = int.max;
@@ -1140,6 +1119,9 @@ public final class TableBufferItem : BufferItem
     
     private void SpoolLine(const int lineNumber)
     {
+        if (!Program.Buffer.IsSpooling)
+            return;
+    
         auto line = lines[lineNumber];
         spooledLineCount++;
         
@@ -1151,8 +1133,8 @@ public final class TableBufferItem : BufferItem
             {
                 if (columnIndex > 0)
                 {
-                    text.put(Program.Settings.ColumnSeparator);
-                    underLine.put(Program.Settings.ColumnSeparator);
+                    text.put(Program.Settings.ColumnSeparatorString);
+                    underLine.put(Program.Settings.ColumnSeparatorString);
                 }
                 
                 auto width = ColumnWidth!true(columnIndex);
@@ -1160,16 +1142,16 @@ public final class TableBufferItem : BufferItem
                 
                 underLine.put(repeat(Program.Settings.UnderlineCharacter, width));
                 
-                if (heading.length > width)
-                    heading = heading[0 .. width];
+                if (heading.toUtf8Slice.length > width)
+                    heading = heading.toUtf8Slice[0 .. width];
                 
                 text.put(heading);
                 
                 if (columnIndex == columns.length - 1)
                     break;
                 
-                if (width > heading.length)
-                    text.put(repeat(' ', width - heading.intLength));
+                if (width > heading.toUtf8Slice.length)
+                    text.put(repeat(' ', width - heading.toUtf8Slice.intLength));
             }
             
             Program.Buffer.Spool(text.data);
@@ -1190,22 +1172,22 @@ public final class TableBufferItem : BufferItem
         foreach (columnIndex, column; columns)
         {
             if (columnIndex > 0)
-                text.put(Program.Settings.ColumnSeparator);
+                text.put(Program.Settings.ColumnSeparatorString);
             
             auto width = ColumnWidth!true(columnIndex);
             
             auto fieldText = line.TextAt!(WidthMode.RestrictToColumn)(this, columnIndex);
             
-            if (fieldText.length > width)
-                fieldText = fieldText[0 .. width];
+            if (fieldText.toUtf8Slice.length > width)
+                fieldText = fieldText.toUtf8Slice[0 .. width];
             
             text.put(fieldText);
             
             if (columnIndex == columns.length - 1)
                 break;
             
-            if (width > fieldText.length)
-                text.put(repeat(' ', width - fieldText.intLength));
+            if (width > fieldText.toUtf8Slice.length)
+                text.put(repeat(' ', width - fieldText.toUtf8Slice.intLength));
         }
         
         Program.Buffer.Spool(text.data);
@@ -1213,6 +1195,9 @@ public final class TableBufferItem : BufferItem
     
     private void Spool()
     {
+        if (!Program.Buffer.IsSpooling)
+            return;
+        
         const firstRow = isSpoolingDuringCollection ? pendingDiscardLineCount + 2 : 0;
         
         foreach (lineIndex; firstRow .. lines.intLength)
@@ -1314,7 +1299,7 @@ public final class TableBufferItem : BufferItem
                     // I'm not sure how I'm supposed to know what the actual length is 
                     // without parsing all possible format codes.  
                     
-                    if (text.length > width)
+                    if (text.toUtf8Slice.length > width)
                         return replicate("#", width);
                 }
                 

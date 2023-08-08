@@ -2,7 +2,7 @@ module errors;
 
 import std.conv : to;
 
-import derelict.sdl2.sdl;
+import bindbc.sdl;
 
 import common;
 

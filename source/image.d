@@ -4,7 +4,8 @@ import std.conv : to;
 
 import std.windows.syserror;
 
-import derelict.sdl2.sdl;
+import bindbc.sdl;
+import bindbc.sdl.image;
 
 import errors;
 
@@ -76,7 +77,7 @@ private final class ImageSource(string filename) : Image
         
         CheckSDLError(SDL_SetTextureAlphaMod(texture, opacity));
         CheckSDLError(SDL_SetTextureColorMod(texture, r, g, b));
-        CheckSDLError(SDL_SetTextureBlendMode(texture, SDL_BlendMode.SDL_BLENDMODE_BLEND));
+        CheckSDLError(SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND));
         CheckSDLError(SDL_RenderCopy(renderer, texture, null, &destination));
     }
 }

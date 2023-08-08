@@ -108,7 +108,7 @@ public final class Settings
         (string value) 
         { 
             if (value.length != 1)
-                throw new RecoverableException("Invalid value.  This must be a single character.");
+                throw new RecoverableException("Invalid value.  This must be a single ASCII character.");
             
             return value;
         });
@@ -172,23 +172,19 @@ public final class Settings
         AddPath(getcwd);
     }
     
-    
     //////// Substitution Variables ////////
     
     private static string[string] substitutionVariables;
     
-    public static const(string[string]) SubstitutionVariables() @nogc nothrow  { return substitutionVariables; }
+    public static const(string[string]) SubstitutionVariables() @nogc nothrow => substitutionVariables;
     
-    public static string SubstitutionVariable(string name) { return substitutionVariables.get(name, ""); }
+    public static string SubstitutionVariable(string name) => substitutionVariables.get(name, "");
     
-    public static bool SubstitutionVariableExists(string name) @nogc nothrow { return cast(bool)(name in substitutionVariables); }
+    public static bool SubstitutionVariableExists(string name) @nogc nothrow => cast(bool)(name in substitutionVariables);
     
     public static void ClearSubstitutionVariable(string name) @nogc nothrow { substitutionVariables.remove(name); }
     
-    public static void SetSubstitutionVariable(string name, string value) nothrow 
-    {
-        substitutionVariables[name] = value;
-    }
+    public static void SetSubstitutionVariable(string name, string value) nothrow { substitutionVariables[name] = value; }
     
     //////// Colors ////////
     
@@ -260,7 +256,6 @@ public final class Settings
     public static StopWatch[string] Timers;
     
     
-    
     //////// Breaks ////////
     static BreakDefinition[] Breaks;
     
@@ -270,18 +265,30 @@ public final class Settings
     
     
     //////// Column Separator ////////
-    mixin Setting!("ColumnSeparator", string, " ", "COLSEP", "COLSEP", 
+    private static string columnSeparatorString = " ";
+    public static string ColumnSeparatorString() @nogc nothrow => columnSeparatorString;
+    
+    private static dstring columnSeparatorDString = " ";
+    public static dstring ColumnSeparatorDString() @nogc nothrow => columnSeparatorDString;
+    
+    mixin Setting!("ColumnSeparator", void, void, "COLSEP", "COLSEP", 
         "SET COLSEP {OFF | \" \" | separator_character}", 
         ["OFF"], null, 
-        (string value, string remainingCommand) => value, 
+        (string remainingCommand) => columnSeparatorString, 
         (string value)
         {
             const newValue = Interpreter.ConsumeToken(value);
             
             if (Interpreter.StartsWithCommandWord!"OFF"(newValue))
-                return " ";
+            {
+                columnSeparatorString = " ";
+                columnSeparatorDString = " ";
+                return;
+            }
             
-            return OracleNames.RemoveQuotes(newValue);
+            const innerValue = OracleNames.RemoveQuotes(newValue);
+            columnSeparatorString = innerValue;
+            columnSeparatorDString = innerValue.to!dstring;
         });
     
     
@@ -312,7 +319,7 @@ public final class Settings
             }
             
             if (value.length != 1)
-                throw new RecoverableException("Invalid value.  This must be a single character.");
+                throw new RecoverableException("Invalid value.  This must be a single ASCII character.");
             
             BlockTerminatorCharacter = value;
         });
@@ -417,13 +424,13 @@ public final class Settings
     
     //////// Describe ////////
     private static int describeDepth = int.max;
-    public static int DescribeDepth() @nogc nothrow { return describeDepth; }
+    public static int DescribeDepth() @nogc nothrow => describeDepth;
     
     private static bool isDescribeLineNumbersOn = false;
-    public static bool IsDescribeLineNumbersOn() @nogc nothrow { return isDescribeLineNumbersOn; }
+    public static bool IsDescribeLineNumbersOn() @nogc nothrow => isDescribeLineNumbersOn;
     
     private static bool isDescribeIndentOn = true;
-    public static bool IsDescribeIndentOn() @nogc nothrow { return isDescribeIndentOn; }
+    public static bool IsDescribeIndentOn() @nogc nothrow => isDescribeIndentOn;
     
     mixin Setting!("Describe", void, void, "DESCRIBE", "DESCRIBE", 
         "SET DESCRIBE [DEPTH {number_of_levels | ALL}] [LINENUM {ON | OFF}] [INDENT {ON | OFF}]" ~ lineEnding ~ lineEnding ~ "  Not all features implemented", 
@@ -436,13 +443,13 @@ public final class Settings
             
             if (Interpreter.StartsWithCommandWord!"LINENUM"(remainingCommand))
                 return "LINENUM " ~ BooleanToOnOff(isDescribeLineNumbersOn);
-                
+            
             if (Interpreter.StartsWithCommandWord!"INDENT"(remainingCommand))
                 return "INDENT " ~ BooleanToOnOff(isDescribeIndentOn);
             
             return "DEPTH " ~ (describeDepth == int.max ? "ALL" : describeDepth.to!string) ~ 
-                  " LINENUM " ~ BooleanToOnOff(isDescribeLineNumbersOn) ~ 
-                  " INDENT " ~ BooleanToOnOff(isDescribeIndentOn);
+                   " LINENUM " ~ BooleanToOnOff(isDescribeLineNumbersOn) ~ 
+                   " INDENT " ~ BooleanToOnOff(isDescribeIndentOn);
         }, 
         (string value)
         {
@@ -556,7 +563,7 @@ public final class Settings
             if (Interpreter.StartsWithCommandWord!"HEIGHT"(remainingCommand))
                 return "HEIGHT " ~ Program.Screen.windowHeight.to!string;
             
-            return "LEFT "    ~ Program.Screen.windowLeft  .to!string ~ 
+            return "LEFT "   ~ Program.Screen.windowLeft  .to!string ~ 
                   " TOP "    ~ Program.Screen.windowTop   .to!string ~ 
                   " WIDTH "  ~ Program.Screen.windowWidth .to!string ~ 
                   " HEIGHT " ~ Program.Screen.windowHeight.to!string;
@@ -820,10 +827,10 @@ public final class Settings
     
     //////// Define ////////
     private static bool substitutionEnabled = true;
-    public static bool SubstitutionEnabled() @nogc nothrow { return substitutionEnabled; }
+    public static bool SubstitutionEnabled() @nogc nothrow => substitutionEnabled;
     
     private static char substitutionCharacter = '&';
-    public static char SubstitutionCharacter() @nogc nothrow { return substitutionCharacter; }
+    public static char SubstitutionCharacter() @nogc nothrow => substitutionCharacter;
     
     mixin Setting!("Define", void, void, "DEF", "DEFINE", 
         "SET DEF[INE] {ON | OFF | c}", 
@@ -836,11 +843,47 @@ public final class Settings
             else if (value.toUpper == "OFF")
                 substitutionEnabled = false;
             else if (value.length != 1)
-                throw new RecoverableException("Define must be a single character.");
+                throw new RecoverableException("Define must be a single ASCII character.");
             else 
                 substitutionCharacter = value[0];
         });
     
+    //////// Script File Format ////////
+    private static string scriptFileFormat = "UTF-8";
+    public static string ScriptFileFormat() @nogc nothrow => scriptFileFormat;
+    
+    mixin Setting!("ScriptFileFormat", void, void, "SCRIPTFILEFORMAT", "SCRIPTFILEFORMAT", 
+        "SET SCRIPTFILEFORMAT {UTF8 | UTF16 | UTF32 | LATIN1 | LATIN2 | WINDOWS_1250 | WINDOWS_1251 | WINDOWS_1252 | other}" ~ lineEnding ~ 
+        "    WHERE \"other\" will attempt to look up the encoding in the D standard library.", 
+        ["UTF8", "UTF16", "UTF32", "LATIN1", "LATIN2", "WINDOWS_1250", "WINDOWS_1251", "WINDOWS_1252"], 
+        null, 
+        (string remainingCommand) => "SCRIPTFILEFORMAT = " ~ ScriptFileFormat.to!string, 
+        (string value)
+        {
+            auto valueUpperCase = value.toUpper;
+            
+            switch (valueUpperCase)
+            {
+                case "UTF8":         scriptFileFormat = "UTF-8";        break;
+                case "UTF16":        scriptFileFormat = "UTF-16";       break;
+                case "UTF32":        scriptFileFormat = "UTF-32";       break;
+                case "LATIN1":       scriptFileFormat = "ISO-8859-1";   break;
+                case "LATIN2":       scriptFileFormat = "ISO-8859-2";   break;
+                case "WINDOWS_1250": scriptFileFormat = "WINDOWS-1250"; break;
+                case "WINDOWS_1251": scriptFileFormat = "WINDOWS-1251"; break;
+                case "WINDOWS_1252": scriptFileFormat = "WINDOWS-1252"; break;
+                default: 
+                    scriptFileFormat = valueUpperCase;
+            }
+            
+            import std.encoding : EncodingScheme, EncodingException;
+            try
+            {
+                auto encodingScheme = EncodingScheme.create(Program.Settings.ScriptFileFormat);
+            }
+            catch (EncodingException)
+                throw new RecoverableException("Cannot find encoding for \"" ~ valueUpperCase ~ "\".");
+        });
     
     //////// Echo ////////
     mixin OnOffSetting!("IsEchoScriptCommands", false, "ECHO", "ECHO", 
@@ -849,10 +892,10 @@ public final class Settings
     
     //////// Underline ////////
     private static auto isUnderlineEnabled = true;
-    public static auto IsUnderlineEnabled() @nogc nothrow { return isUnderlineEnabled; }
+    public static auto IsUnderlineEnabled() @nogc nothrow => isUnderlineEnabled;
     
     private static auto underlineCharacter = '-';
-    public static auto UnderlineCharacter() @nogc nothrow { return underlineCharacter; }
+    public static auto UnderlineCharacter() @nogc nothrow => underlineCharacter;
     
     mixin Setting!("UnderlineCharacter", void, void, "UND", "UNDERLINE", 
         "SET UNDERLINE {ON | OFF | c}", 
@@ -865,7 +908,7 @@ public final class Settings
             else if (value.toUpper == "OFF")
                 isUnderlineEnabled = false;
             else if (value.length != 1)
-                throw new RecoverableException("Underline must be a single character.");
+                throw new RecoverableException("Underline must be a single ASCII character.");
             else
                 underlineCharacter = value[0];
         });

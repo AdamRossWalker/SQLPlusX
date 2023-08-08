@@ -8,14 +8,17 @@ import std.string : toStringz;
 import std.traits : EnumMembers;
 import std.typecons : Nullable, Flag, Yes, No;
 import std.datetime : Duration, dur;
+import std.utf : byDchar;
 
-import derelict.sdl2.sdl;
-import derelict.sdl2.image;
-import derelict.sdl2.ttf;
+import bindbc.sdl;
+import bindbc.sdl.image;
+import bindbc.sdl.ttf;
 
 import program;
 import logo;
 import image;
+import most_recently_used_cache;
+import utf8_slice;
 
 debug public static string DebugText;
 
@@ -108,7 +111,7 @@ public uint pixelValue(SDL_Color color)
     return *cast(uint*)&color;
 }
 
-private void Destroy(SDL_Texture* texture)
+private void Destroy(SDL_Texture* texture) @trusted nothrow
 {
     if (texture is null)
         return;
@@ -314,13 +317,46 @@ public final class Screen
     private auto characterCenterX = 0;
     private auto characterCenterY = 0;
     private SDL_Rect characterRectangle;
-    private SDL_Texture*[256][FontStyle.max + 1] characterGlyphs;
+    
+    private struct Glyph
+    {
+        enum Variant { Normal, Glow }
+        
+        SDL_Texture*[Variant.max + 1][FontStyle.max + 1] textures;
+        
+        static void dispose(Glyph glyph) @trusted nothrow
+        {
+            static foreach (fontStyle; EnumMembers!FontStyle)        
+                static foreach (glyphVariant; EnumMembers!Variant)
+                    glyph.textures[fontStyle][glyphVariant].Destroy;
+        }
+    }
+    
+    private TTF_Font*[FontStyle.max + 1] font;
+    private auto characterGlyphs = MostRecentlyUsedCache!(dchar, Glyph, 1024, Glyph.dispose)();
+    
+    private SDL_Texture* getCharacter(dchar character, FontStyle fontStyle = FontStyle.Normal, Glyph.Variant glyphVariant = Glyph.Variant.Normal)
+    {
+        Glyph glyph;
+        if (!characterGlyphs.tryGetValue(character, glyph))
+        {
+            glyph = renderGlyph(character);
+            characterGlyphs.add(character, glyph);
+        }
+        
+        auto texture = glyph.textures[fontStyle][glyphVariant];
+        
+        if (texture is null)
+            return glyphMissingTexture;
+        else
+            return texture;
+    }
     
     private auto glowCharacterWidth = 0;
     private auto glowCharacterHeight = 0;
     private auto glowCharacterOffset = 0;
     private SDL_Rect glowCharacterRectangle;
-    private SDL_Texture*[256][FontStyle.max + 1] glowCharacterGlyphs;
+    private SDL_Texture* glyphMissingTexture;
     
     private enum marginWidth = 4;
     private auto memoHeight = 0;
@@ -414,7 +450,7 @@ public final class Screen
     private enum scanLineStride = 2;
     
     private auto iconButtonSize = 16;
-    private enum IconSize { Pixels16x16, Pixels32x32 }
+    private enum IconSize { Pixels16x16, Pixels32x32 } // Note that the last two digits map to file names.
     private enum ArrowDirection { Up, Down, Left, Right };
     private enum ButtonState { Normal, Rollover, Pressed };
     
@@ -444,26 +480,10 @@ public final class Screen
     this(Buffer buffer)
     {
         this.buffer = buffer;
-        // Every time you uncomment one of these, you need to find the DLL.  I have no fucking 
-        // clue how I'm supposed to make sure I have the right DLL.
         
-        // Load the SDL 2 library.
-        DerelictSDL2.load;
-        
-        // Load the SDL2_image library.
-        DerelictSDL2Image.load;
-        
-        // // Load the SDL2_mixer library.
-        // DerelictSDL2Mixer.load;
-        
-        // Load the SDL2_ttf library
-        DerelictSDL2ttf.load;
-        auto initTTFResult = TTF_Init();
+        const initTTFResult = TTF_Init();
         if (initTTFResult != 0)
             ThrowSDLError;
-        
-        // // Load the SDL2_net library.
-        // DerelictSDL2Net.load;
         
         auto initResult = SDL_Init(SDL_INIT_VIDEO); // SDL_INIT_AUDIO
         if (initResult != 0)
@@ -617,12 +637,7 @@ public final class Screen
         }}
         
         //DebugLog("Clearing font textures.");
-        static foreach (fontStyle; EnumMembers!FontStyle)
-            foreach (char rawCharacter; 0 .. 256)
-            {
-                characterGlyphs[fontStyle][rawCharacter] = null;
-                glowCharacterGlyphs[fontStyle][rawCharacter] = null;
-            }
+        characterGlyphs.reset;
         
         //DebugLog("Generating logo block textures.");
         static foreach (type; EnumMembers!(logo.BlockType))
@@ -634,16 +649,6 @@ public final class Screen
     
     ~this()
     {
-        static foreach (fontStyle; EnumMembers!FontStyle)
-            foreach (char rawCharacter; 0 .. 256)
-            {
-                if (characterGlyphs[fontStyle][rawCharacter] !is null)
-                    characterGlyphs[fontStyle][rawCharacter].Destroy;
-                
-                if (glowCharacterGlyphs[fontStyle][rawCharacter] !is null)
-                    glowCharacterGlyphs[fontStyle][rawCharacter].Destroy;
-            }
-        
         renderer.SDL_DestroyRenderer; 
         window.SDL_DestroyWindow;
         SDL_Quit();
@@ -724,7 +729,7 @@ public final class Screen
         }
         
         if (Program.Settings.VerticalScrollBarMode == Program.Settings.VerticalScrollBarModes.Wide)
-            verticalScrollBarWidth = iconButtonSize * 3;
+            verticalScrollBarWidth = iconButtonSize * 4;
         else
             verticalScrollBarWidth = iconButtonSize;
         
@@ -986,7 +991,7 @@ public final class Screen
                         
                         if (headerRecordHorizontalPosition < buffer.HorizontalCharacterCountOffset)
                         {
-                            headerRecordHorizontalPosition += Program.Settings.ColumnSeparator.intLength;
+                            headerRecordHorizontalPosition += Program.Settings.ColumnSeparatorDString.intLength;
                             continue;
                         }
                         
@@ -994,15 +999,15 @@ public final class Screen
                         
                         DrawLine(marginWidth + underlineScreenStartCharacter * characterWidth, textBottom - 1, marginWidth + underlineScreenEndCharacter * characterWidth - 1, textBottom - 1);
                         
-                        headerRecordHorizontalPosition += Program.Settings.ColumnSeparator.intLength;
-                        underlineScreenStartCharacter = underlineScreenEndCharacter + Program.Settings.ColumnSeparator.intLength;
+                        headerRecordHorizontalPosition += Program.Settings.ColumnSeparatorDString.intLength;
+                        underlineScreenStartCharacter = underlineScreenEndCharacter + Program.Settings.ColumnSeparatorDString.intLength;
                         
                         if (underlineScreenStartCharacter > windowWidthInCharacters)
                             break;
                     }
                 }
                 
-                if (table !is null && !isHeaderRow && !isTextRow && Program.Settings.ColumnSeparator == " ")
+                if (table !is null && !isHeaderRow && !isTextRow && Program.Settings.ColumnSeparatorString == " ")
                 {
                     SetDrawColor(headerBackground.color);
                     auto headerRecordHorizontalPosition = 0;
@@ -1545,7 +1550,7 @@ public final class Screen
                             {
                                 if (line.length > rollover.horizontalScrollOffset)
                                     printText(
-                                        line[rollover.horizontalScrollOffset .. min($, rollover.horizontalScrollOffset + rollover.visibleCharacterCount)], 
+                                        line.toUtf8Slice[rollover.horizontalScrollOffset .. min(line.toUtf8Slice.length, rollover.horizontalScrollOffset + rollover.visibleCharacterCount)], 
                                         lineLeft, 
                                         lineTop, 
                                         timeInMilliseconds, 
@@ -1843,6 +1848,49 @@ public final class Screen
         }
     }
     
+    // This is a convolution matrix for the glow effect.  Yes I know a shader would be 
+    // way faster and less code, but it looks like I need OpenGL or DirectX, and it 
+    // appears to be a can of worms for a simple effect.
+    
+    enum matrixSize = 7;
+    enum matrixHalfSize = matrixSize / 2;
+    enum matrix = ()
+    {
+        import std.math : sqrt;
+        
+        float[matrixSize + 1][matrixSize] matrix = 0.0F;
+        
+        static assert(matrixSize % 2 == 1);
+        
+        float sum = 0.0;
+        enum maxRadius = sqrt(cast(float)(matrixHalfSize ^^ 2 + matrixHalfSize ^^ 2));
+        
+        foreach (matrixY; 0 .. matrixSize)
+        {
+            foreach (matrixX; 0 .. matrixSize)
+            {
+                const radius = sqrt(cast(float)((matrixX - matrixHalfSize) ^^ 2 + (matrixY - matrixHalfSize) ^^ 2));
+                float value;
+                
+                if (radius >= maxRadius)
+                    value = 0.0;
+                else
+                    value = (1.0 - radius / maxRadius);
+                    
+                sum += value;
+                matrix[matrixY][matrixX] = value;
+            }
+        }
+        
+        if (sum <= 0.0 || sum > matrixSize ^^ 2)
+            throw new Exception("Convolution matrix calculation failure.");
+        
+        foreach (matrixY; 0 .. matrixSize)
+            foreach (matrixX; 0 .. matrixSize)
+                matrix[matrixY][matrixX] /= sum;
+        
+        return matrix;
+    }();
     
     private void RefreshCachedFontData()
     {
@@ -1850,54 +1898,22 @@ public final class Screen
             return;
         
         isCachedFontDataValid = true;
+        characterGlyphs.reset;
         
-        // import std.datetime.stopwatch : StopWatch, AutoStart;
-        // auto stopWatch = StopWatch(AutoStart.yes);
-        
-        // This is a convolution matrix for the glow effect.  Yes I know a shader would be 
-        // way faster and less code, but it looks like I need OpenGL or DirectX, and it 
-        // appears to be a can of worms for a simple effect.
-        
-        enum matrixSize = 7;
-        enum matrixHalfSize = matrixSize / 2;
-        enum matrix = ()
+        if (font[FontStyle.Normal] !is null)
         {
-            import std.math : sqrt;
-            
-            float[matrixSize + 1][matrixSize] matrix = 0.0F;
-            
-            static assert(matrixSize % 2 == 1);
-            
-            float sum = 0.0;
-            enum maxRadius = sqrt(cast(float)(matrixHalfSize ^^ 2 + matrixHalfSize ^^ 2));
-            
-            foreach (matrixY; 0 .. matrixSize)
-            {
-                foreach (matrixX; 0 .. matrixSize)
-                {
-                    const radius = sqrt(cast(float)((matrixX - matrixHalfSize) ^^ 2 + (matrixY - matrixHalfSize) ^^ 2));
-                    float value;
-                    
-                    if (radius >= maxRadius)
-                        value = 0.0;
-                    else
-                        value = (1.0 - radius / maxRadius);
-                        
-                    sum += value;
-                    matrix[matrixY][matrixX] = value;
-                }
-            }
-            
-            if (sum <= 0.0 || sum > matrixSize ^^ 2)
-                throw new Exception("Convolution matrix calculation failure.");
-            
-            foreach (matrixY; 0 .. matrixSize)
-                foreach (matrixX; 0 .. matrixSize)
-                    matrix[matrixY][matrixX] /= sum;
-            
-            return matrix;
-        }();
+            font[FontStyle.Normal].TTF_CloseFont;
+            font[FontStyle.Normal].destroy;
+            font[FontStyle.Normal] = null;
+        }
         
+        if (font[FontStyle.Bold] !is null)
+        {
+            font[FontStyle.Bold].TTF_CloseFont;
+            font[FontStyle.Bold].destroy;
+            font[FontStyle.Bold] = null;
+        }
+
         static foreach (fontStyle; EnumMembers!FontStyle)
         {{
             static if (fontStyle == FontStyle.Normal)
@@ -1909,156 +1925,105 @@ public final class Screen
             if (fontMemory is null)
                 ThrowSDLError("Loading font.");
             
-            auto font = TTF_OpenFontRW(fontMemory, 1, fontSize);
-            if (font is null)
+            font[fontStyle] = TTF_OpenFontRW(fontMemory, 1, fontSize);
+            if (font[fontStyle] is null)
                 ThrowSDLError("Creating font.");
-            
-            scope (exit) font.TTF_CloseFont;
             
             final switch (fontHint) with (FontHints)
             {
-                case None:          TTF_SetFontHinting(font, TTF_HINTING_NONE);             break;
-                case Normal:        TTF_SetFontHinting(font, TTF_HINTING_NORMAL);           break;
-                case Light:         TTF_SetFontHinting(font, TTF_HINTING_LIGHT);            break;
-                case Mono:          TTF_SetFontHinting(font, TTF_HINTING_MONO);             break;
-                case LightSubPixel: TTF_SetFontHinting(font, TTF_HINTING_LIGHT);            break; // TODO: Use TTF_HINTING_LIGHT_SUBPIXEL after I can be bother to upgrade. 
+                case None:          TTF_SetFontHinting(font[fontStyle], TTF_HINTING_NONE);           break;
+                case Normal:        TTF_SetFontHinting(font[fontStyle], TTF_HINTING_NORMAL);         break;
+                case Light:         TTF_SetFontHinting(font[fontStyle], TTF_HINTING_LIGHT);          break;
+                case Mono:          TTF_SetFontHinting(font[fontStyle], TTF_HINTING_MONO);           break;
+                case LightSubPixel: TTF_SetFontHinting(font[fontStyle], TTF_HINTING_LIGHT_SUBPIXEL); break;
             }
-            
-            static if (fontStyle == FontStyle.Normal)
+        }}
+        
+        enum nullPointer = cast(int*)0;
+        
+        TTF_GlyphMetrics(font[FontStyle.Bold], 'W', nullPointer, nullPointer, nullPointer, nullPointer, &characterWidth);
+        characterHeight = TTF_FontHeight(font[FontStyle.Bold]);
+        characterRectangle = SDL_Rect(0, 0, characterWidth, characterHeight);
+        
+        characterCenterX = characterWidth / 2;
+        characterCenterY = characterHeight / 2;
+        
+        glowCharacterWidth  = characterWidth  + 2 * matrixHalfSize;
+        glowCharacterHeight = characterHeight + 2 * matrixHalfSize;
+        glowCharacterOffset = matrixHalfSize;
+        glowCharacterRectangle = SDL_Rect(0, 0, glowCharacterWidth, glowCharacterHeight);
+        
+        CheckSDLError;
+        
+        auto glyphMissingSurface = SDL_CreateRGBSurface(0, characterWidth, characterHeight, 32, 0, 0, 0, 0);
+        scope (exit) glyphMissingSurface.SDL_FreeSurface;
+        
+        if (glyphMissingSurface is null)
+            ThrowSDLError;
+        
+        glyphMissingSurface.SDL_SetColorKey(SDL_TRUE, 0);
+        SDL_FillRect(glyphMissingSurface, null, SDL_MapRGBA(glyphMissingSurface.format, 255, 255, 255, 127));
+        
+        CheckSDLError;
+        
+        glyphMissingTexture = SDL_CreateTextureFromSurface(renderer, glyphMissingSurface);
+        
+        RefreshWindowSizes!(WindowDimensions.Reuse);
+    }
+    
+    private Glyph renderGlyph(dchar rawCharacter)
+    {
+        auto glyph = Glyph();
+    
+        // import std.datetime.stopwatch : StopWatch, AutoStart;
+        // auto stopWatch = StopWatch(AutoStart.yes);
+        
+        static foreach (fontStyle; EnumMembers!FontStyle)
+        {{
+            try
             {
-                enum nullPointer = cast(int*)0;
+                // This framed work area is so we can scan the matrix area over this data
+                // without worrying about boundary conditions.  Combined with static foreach 
+                // below, this is noticeably quicker.
+                const framedPixelsWidth  = glowCharacterWidth  + 2 * matrixHalfSize + 1;
+                const framedPixelsHeight = glowCharacterHeight + 2 * matrixHalfSize;
                 
-                TTF_GlyphMetrics(font, 'W', nullPointer, nullPointer, nullPointer, nullPointer, &characterWidth);
-                characterHeight = TTF_FontHeight(font);
-                characterRectangle = SDL_Rect(0, 0, characterWidth, characterHeight);
-                
-                characterCenterX = characterWidth / 2;
-                characterCenterY = characterHeight / 2;
-                
-                glowCharacterWidth  = characterWidth  + 2 * matrixHalfSize;
-                glowCharacterHeight = characterHeight + 2 * matrixHalfSize;
-                glowCharacterOffset = matrixHalfSize;
-                glowCharacterRectangle = SDL_Rect(0, 0, glowCharacterWidth, glowCharacterHeight);
-                
-                CheckSDLError;
-            }
-            
-            auto glyphMissingSurface = SDL_CreateRGBSurface(0, characterWidth, characterHeight, 32, 0, 0, 0, 0);
-            if (glyphMissingSurface is null)
-                ThrowSDLError;
-            
-            glyphMissingSurface.SDL_SetColorKey(SDL_TRUE, 0);
-            SDL_FillRect(glyphMissingSurface, null, SDL_MapRGBA(glyphMissingSurface.format, 255, 255, 255, 127));
-            
-            CheckSDLError;
-            
-            auto glyphMissingTexture = SDL_CreateTextureFromSurface(renderer, glyphMissingSurface);
-            
-            SDL_Surface*[256] newCharacterSurfaces;
-            int[][256]        newSurfacePixels;
-            int[256]          newSurfaceWidths;
-            int[256]          newSurfaceHeights;
-            int[][256]        newSurfacePixelsGlow;
-            bool[256]         successes = true;
-            
-            // This framed work area is so we can scan the matrix area over this data
-            // without worrying about boundary conditions.  Combined with static foreach 
-            // below, this is noticeably quicker.
-            const framedPixelsWidth  = glowCharacterWidth  + 2 * matrixHalfSize + 1;
-            const framedPixelsHeight = glowCharacterHeight + 2 * matrixHalfSize;
-            
-            import std.range : iota;
-            foreach (characterIndex; iota(1, 256))
-            {
-                immutable rawCharacter = cast(char)characterIndex;
                 immutable character = (rawCharacter >= 10 && rawCharacter <= 13) ? 182 :
                                       (rawCharacter == 9) ? 8594 : // Unicode for a right arrow.
                                        rawCharacter;
                 
                 immutable opacity = (rawCharacter == 10 || rawCharacter == 13 || rawCharacter == 9) ? 127 : 255;
                 
-                try
-                {
-                    SDL_Surface* surface;
+                SDL_Surface* surface;
                 
-                    final switch (FontDrawMode) with (FontDrawModes)
-                    {
-                        case Blend:
-                            surface = TTF_RenderGlyph_Blended(font, character, SDL_Color(255, 255, 255, opacity));
-                            if (surface is null)
-                                ThrowSDLError;
-                            
-                            break;
-                    
-                        case Solid:
-                            surface = TTF_RenderGlyph_Solid(font, character, SDL_Color(255, 255, 255, opacity));
-                            if (surface is null)
-                                ThrowSDLError;
-                            
-                            CheckSDLError;
-                            
-                            surface.SDL_SetColorKey(SDL_TRUE, 0);
-                            
-                            CheckSDLError;
-                            
-                            auto pixelFormat = SDL_AllocFormat(nativePixelFormat);
-                            
-                            surface = SDL_ConvertSurface(surface, pixelFormat, 0);
-                            break;
-                    
-                        case Shade:
-                            surface = TTF_RenderGlyph_Shaded(font, character, SDL_Color(255, 255, 255, opacity), SDL_Color(0, 0, 0, 0));
-                            if (surface is null)
-                                ThrowSDLError;
-                            
-                            CheckSDLError;
-                            
-                            surface.SDL_SetColorKey(SDL_TRUE, 0);
-                            
-                            CheckSDLError;
-                            
-                            auto pixelFormat = SDL_AllocFormat(nativePixelFormat);
-                            surface = SDL_ConvertSurface(surface, pixelFormat, 0);
-                            break;
-                    }
-                    
-                    CheckSDLError;
-                    
-                    surface.SDL_SetColorKey(SDL_TRUE, 0);
-                    
-                    CheckSDLError;
-                    
-                    newCharacterSurfaces[characterIndex] = surface;
-                    newSurfacePixels[characterIndex] = (cast(int*)surface.pixels)[0 .. surface.w * surface.h];
-                    newSurfaceWidths[characterIndex] = surface.w;
-                    newSurfaceHeights[characterIndex] = surface.h;
-                }
-                catch (SDLException)
+                final switch (FontDrawMode) with (FontDrawModes)
                 {
-                    successes[characterIndex] = false;
+                    case Blend:
+                        surface = TTF_RenderGlyph32_Blended(font[fontStyle], character, SDL_Color(255, 255, 255, opacity));
+                        break;
+                      
+                    case Solid:
+                        surface = TTF_RenderGlyph32_Solid(font[fontStyle], character, SDL_Color(255, 255, 255, opacity));
+                        break;
+                
+                    case Shade:
+                        surface = TTF_RenderGlyph32_Shaded(font[fontStyle], character, SDL_Color(255, 255, 255, opacity), SDL_Color(0, 0, 0, 0));
+                        break;
                 }
-            }
-            
-            scope (exit)
-                foreach (surface; newCharacterSurfaces)
-                    surface.SDL_FreeSurface;
-            
-            import std.algorithm : filter;
-            import std.range : enumerate, drop;
-            import std.parallelism : parallel;
-            
-            foreach (characterIndex; 
-                successes[]
-                .enumerate
-                .drop(1)
-                .filter!(success => success.value)
-                .map!(success => success.index)
-                .parallel(1)) // For some wild reason, not specifying the workSize appears to run only 
-                              // one task.  At least; the performance matched zero parallelism for me.
-            {
-                auto surfacePixels = newSurfacePixels [characterIndex];
-                const surfaceWidth  = newSurfaceWidths [characterIndex];
-                const surfaceHeight = newSurfaceHeights[characterIndex];
+                
+                if (surface is null)
+                    ThrowSDLError;
+                
+                surface.SDL_SetColorKey(SDL_TRUE, 0);
+                CheckSDLError;
+                
+                auto pixelFormat = SDL_AllocFormat(nativePixelFormat);
+                surface = SDL_ConvertSurface(surface, pixelFormat, 0);
+                CheckSDLError;
+                
+                auto surfacePixels = (cast(int*)surface.pixels)[0 .. surface.w * surface.h];
+                
+                scope (exit) surface.SDL_FreeSurface;
                 
                 auto surfaceIndex = 0;
                 
@@ -2067,19 +2032,19 @@ public final class Screen
                 
                 version (D_SIMD)
                 {
-                    const surfaceRowEndDivisibleByFour = 4 * (surfaceWidth / 4);
+                    const surfaceRowEndDivisibleByFour = 4 * (surface.w / 4);
                     const glowEndDivisibleByFour       = 4 * (glowCharacterHeight * glowCharacterWidth / 4);
                 }
                 
                 {
                     auto framedPixelsIndex = 2 * matrixHalfSize * framedPixelsWidth + 2 * matrixHalfSize;
-                    const frameRowPadding = framedPixelsWidth - surfaceWidth;
+                    const frameRowPadding = framedPixelsWidth - surface.w;
                     
-                    foreach (surfaceY; 0 .. surfaceHeight)
+                    foreach (surfaceY; 0 .. surface.h)
                     {
                         // I tried vectorizing this one too, but it went slower.
                         
-                        foreach (surfaceX; 0 .. surfaceWidth)
+                        foreach (surfaceX; 0 .. surface.w)
                         {
                             version (LittleEndian)
                                 framedPixels[framedPixelsIndex] = float(surfacePixels[surfaceIndex] >>> 24);
@@ -2095,7 +2060,7 @@ public final class Screen
                         // The rendered glyph may be larger than our framed work area (and is at larger font sizes). 
                         // I suspect this is the bold font style causing the problem.  If it looks like we're about 
                         // to overflow, skip out here.
-                        if (framedPixelsIndex > framedPixels.length - surfaceWidth)
+                        if (framedPixelsIndex > framedPixels.length - surface.w)
                             break;
                     }
                 }
@@ -2103,7 +2068,7 @@ public final class Screen
                 if (IsShowingScanLines)
                 {
                     surfaceIndex = 0;
-                    for (int surfaceY = 0; surfaceY < surfaceHeight; surfaceY += 2)
+                    for (int surfaceY = 0; surfaceY < surface.h; surfaceY += 2)
                     {
                         version (D_SIMD)
                         {
@@ -2140,7 +2105,7 @@ public final class Screen
                                 surfaceIndex += 4;
                             }
                             
-                            for (int surfaceX = surfaceRowEndDivisibleByFour; surfaceX < surfaceWidth; surfaceX++)
+                            for (int surfaceX = surfaceRowEndDivisibleByFour; surfaceX < surface.w; surfaceX++)
                             {
                                 version (LittleEndian)
                                 {
@@ -2159,7 +2124,7 @@ public final class Screen
                         }
                         else
                         {
-                            foreach (surfaceX; 0 .. surfaceWidth)
+                            foreach (surfaceX; 0 .. surface.w)
                             {
                                 version (LittleEndian)
                                 {
@@ -2177,7 +2142,7 @@ public final class Screen
                             }
                         }
                         
-                        surfaceIndex += surfaceWidth;
+                        surfaceIndex += surface.w;
                     }
                 }
                 
@@ -2280,67 +2245,36 @@ public final class Screen
                     }
                 }
                 
-                newSurfacePixelsGlow[characterIndex] = glowPixels;
+                auto glowCharacterRect = SDL_Rect(0, 0, glowCharacterWidth, glowCharacterHeight);
+                
+                auto newCharacterTexture = SDL_CreateTextureFromSurface(renderer, surface);
+                if (newCharacterTexture is null)
+                    ThrowSDLError;
+                
+                CheckSDLError;
+                
+                glyph.textures[fontStyle][Glyph.Variant.Normal] = newCharacterTexture;
+                
+                auto glowCharacterTexture = SDL_CreateTexture(renderer, nativePixelFormat, SDL_TEXTUREACCESS_STATIC, glowCharacterWidth, glowCharacterHeight);
+                glowCharacterTexture.SDL_SetTextureBlendMode(SDL_BLENDMODE_BLEND);
+                glowCharacterTexture.SDL_UpdateTexture(&glowCharacterRect, glowPixels.ptr, glowCharacterWidth * 4);
+                
+                CheckSDLError;
+                
+                glyph.textures[fontStyle][Glyph.Variant.Glow] = glowCharacterTexture;
             }
-            
-            
-            auto glowCharacterRect = SDL_Rect(0, 0, glowCharacterWidth, glowCharacterHeight);
-            
-            foreach (characterIndex; iota(1, 256))
+            catch (SDLException)
             {
-                immutable rawCharacter = cast(char)characterIndex;
-                SDL_Texture* newCharacterTexture;
-                
-                if (successes[characterIndex])
-                    try
-                    {
-                        newCharacterTexture = SDL_CreateTextureFromSurface(renderer, newCharacterSurfaces[characterIndex]);
-                        if (newCharacterTexture is null)
-                            ThrowSDLError;
-                        
-                        CheckSDLError;
-                    }
-                    catch (SDLException)
-                    {
-                        SDL_ClearError();
-                        successes[characterIndex] = false;
-                    }
-                
-                if (!successes[characterIndex])
-                    newCharacterTexture = glyphMissingTexture;
-                
-                if (characterGlyphs[fontStyle][rawCharacter] !is null)
-                {
-                    characterGlyphs[fontStyle][rawCharacter].Destroy;
-                    CheckSDLError;
-                }
-                
-                characterGlyphs[fontStyle][rawCharacter] = newCharacterTexture;
-                
-                if (successes[characterIndex])
-                {
-                    auto glowPixels = newSurfacePixelsGlow[characterIndex];
-                    auto glowCharacterTexture = SDL_CreateTexture(renderer, nativePixelFormat, SDL_TEXTUREACCESS_STATIC, glowCharacterWidth, glowCharacterHeight);
-                    glowCharacterTexture.SDL_SetTextureBlendMode(SDL_BLENDMODE_BLEND);
-                    glowCharacterTexture.SDL_UpdateTexture(&glowCharacterRect, glowPixels.ptr, glowCharacterWidth * 4);
-                    
-                    CheckSDLError;
-                    
-                    if (glowCharacterGlyphs[fontStyle][rawCharacter] !is null)
-                    {
-                        glowCharacterGlyphs[fontStyle][rawCharacter].Destroy;
-                        CheckSDLError;
-                    }
-                    
-                    glowCharacterGlyphs[fontStyle][rawCharacter] = glowCharacterTexture;
-                }
+                SDL_ClearError();
+                glyph.textures[fontStyle][Glyph.Variant.Normal] = null;
+                glyph.textures[fontStyle][Glyph.Variant.Glow] = null;
             }
         }}
         
         // stopWatch.stop;
         // Program.diagnosticInformation = stopWatch.peek.DurationToPrettyString;
         
-        RefreshWindowSizes!(WindowDimensions.Reuse);
+        return glyph;
     }
     
     private void SetDrawColor(const SDL_Color color)
@@ -2391,14 +2325,14 @@ public final class Screen
         const int y, 
         const int timeInMilliseconds, 
         const NamedColor fontColor = NamedColor.Normal, 
-        const FontStyle style = FontStyle.Normal, 
+        const FontStyle fontStyle = FontStyle.Normal, 
         const ubyte opacity = 255)
     {
         auto color        = LookupNamedColor!( No.isOutline)(fontColor, timeInMilliseconds);
         auto outlineColor = LookupNamedColor!(Yes.isOutline)(fontColor, timeInMilliseconds);
         
         int characterX = x;
-        foreach (char character; text)
+        foreach (character; text.byDchar)
         {
             if (character == 32 || character == 0)
             {
@@ -2406,9 +2340,9 @@ public final class Screen
                 continue;
             }
 
-            if (isOutliningNormalText || fontColor != NamedColor.Normal || style != FontStyle.Normal)
+            if (isOutliningNormalText || fontColor != NamedColor.Normal || fontStyle != FontStyle.Normal)
             {
-                auto glowCharacterTexture = glowCharacterGlyphs[style][character];
+                auto glowCharacterTexture = getCharacter(character, fontStyle, Glyph.Variant.Glow);
                 
                 SDL_SetTextureColorMod(glowCharacterTexture, outlineColor.r, outlineColor.g, outlineColor.b);
                 SDL_SetTextureAlphaMod(glowCharacterTexture, cast(ubyte)(outlineColor.a * opacity / 255));
@@ -2419,7 +2353,7 @@ public final class Screen
             }
             
             auto characterDestinationRectangle = SDL_Rect(characterX, y, characterWidth, characterHeight);
-            auto characterTexture = characterGlyphs[style][character];
+            auto characterTexture = getCharacter(character, fontStyle);
             
             SDL_SetTextureColorMod(characterTexture, color.r, color.g, color.b);
             SDL_SetTextureAlphaMod(characterTexture, cast(ubyte)(color.a * opacity / 255));
