@@ -1,6 +1,12 @@
 
 # Change Log
 
+## V1.2.0
+
+03-Feb-2024
+
+A couple of minor tweaks so that the autocomplete and command history will respond to the up/down arrow keys if the current command is single line.  Added a tool tip to the autocomplete popup to indicate CTRL+Up/Down can be used.
+
 ## V1.1.0
 
 08-Aug-2023

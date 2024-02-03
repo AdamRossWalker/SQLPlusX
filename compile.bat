@@ -3,8 +3,8 @@
 REM Use this if there are any changes to resources.rc.
 REM resources\RC\rc.exe resources\resources.rc
 
-dub.exe build --quiet --arch=x86_64 2> compiler_output.txt
-REM dub.exe build --build=release --quiet --arch=x86_64
+REM dub.exe build --quiet --arch=x86_64 --force 2> compiler_output.txt
+dub.exe build --build=release --quiet --arch=x86_64
 
 IF %ERRORLEVEL% NEQ 0 GOTO ERRORS
 
