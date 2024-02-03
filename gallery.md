@@ -29,7 +29,7 @@ This means columns can dynamically size according to the available space.
 
 ![Dynamic Columns Autofit](./images/gallery/autofit-columns.gif)
 
-SQLPlusX supports CLOB fields.  If a CLOB column is in the SELECT list, it's contents are 
+SQLPlusX supports CLOB fields.  If a CLOB column is in the SELECT list, its contents are 
 downloaded for you.
 
 ![CLOB Support](./images/gallery/clob-support.png)
