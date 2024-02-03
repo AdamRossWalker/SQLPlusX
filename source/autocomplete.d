@@ -181,8 +181,8 @@ public final class AutoCompleteManager
     public int SelectedSuggestionIndex;
     public int VisibleSuggestionCount = 0;
     
-    private bool suggestionPopupVisible = true;
-    public bool SuggestionPopupVisible() const @nogc nothrow { return suggestionPopupVisible; }
+    private bool suggestionPopupVisible = false;
+    public bool SuggestionPopupVisible() const @nogc nothrow => suggestionPopupVisible;
     
     public bool ShowSuggestionPopup() @nogc nothrow
     { 
@@ -829,6 +829,8 @@ public final class AutoCompleteManager
         AutoCompleteSuggestions = newAutoCompleteSuggestions;
         SuggestionMaxWidth = maxWidthInCharacters;
         
+        suggestionPopupVisible = newAutoCompleteSuggestions.length > 0;
+        
         foreach (index, suggestion; newAutoCompleteSuggestions)
             if (suggestion == CurrentSuggestion)
             {
@@ -836,13 +838,7 @@ public final class AutoCompleteManager
                 return;
             }
         
-        if (newAutoCompleteSuggestions.length > 0)
-        {
-            SelectedSuggestionIndex = 0;
-            suggestionPopupVisible = true;
-        }
-        else
-            SelectedSuggestionIndex = -1;
+        SelectedSuggestionIndex = suggestionPopupVisible ? 0 : -1;
     }
     
     public string[] FindSuggestionsWithoutCache(string command, int cursorOffset)

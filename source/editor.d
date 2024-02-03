@@ -416,6 +416,8 @@ public final class EditorBufferItem : BufferItem
     
     public override int LineCount() const @nogc nothrow => lines.intLength;
     
+    public bool isMultiLine() const @nogc nothrow => lines.intLength > 1;
+    
     private auto widthInCharacters = 0;
     public override int WidthInCharacters() const @nogc nothrow => widthInCharacters;
     

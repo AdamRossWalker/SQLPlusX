@@ -574,7 +574,7 @@ public final class Screen
         InvalidateFont;
         
         //DebugLog("Creating renderer.");
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
         if (renderer is null)
             ThrowSDLError;
         
@@ -1260,11 +1260,6 @@ public final class Screen
 
             if (!isFullScreen)
                 sizingGripImages[iconSize].Draw(gripButtonLeft, gripButtonTop);
-
-            
-            // if (isHorizontalScrollBarVisible || (isVerticalScrollBarVisible && !isFullScreen))
-            
-            
             
             // Draw autocomplete suggestions
             Program.AutoCompleteDatabase.UpdateSuggestions;
@@ -1314,6 +1309,23 @@ public final class Screen
                 immutable suggestionWindowHeight = suggestionWindowBottom - suggestionWindowTop - 3;
                 
                 DrawPopUpBox(suggestionWindowLeft, suggestionWindowTop, suggestionWindowRight, suggestionWindowBottom);
+                
+                // Draw shortcut hint.
+                enum shortcutHint = "Ctrl+↑↓";
+                enum shortcutHintWidthInCharacters = 7;
+            
+                if (allSuggestions.intLength > 1 &&
+                    maxWidthInCharacters + shortcutHintWidthInCharacters + 4 < windowWidthInCharacters)
+                {
+                    immutable shortcutHintWindowLeft   = suggestionWindowRight + 7;
+                    immutable shortcutHintWindowRight  = shortcutHintWindowLeft + (shortcutHintWidthInCharacters + 1) * characterWidth;
+                    immutable shortcutHintLeft         = shortcutHintWindowLeft + characterCenterX;
+                    immutable shortcutHintWindowTop    = suggestionWindowTop;
+                    immutable shortcutHintWindowBottom = shortcutHintWindowTop + characterHeight;
+                    
+                    DrawPopUpBox(shortcutHintWindowLeft, shortcutHintWindowTop, shortcutHintWindowRight, shortcutHintWindowBottom, 96);
+                    printText(shortcutHint, shortcutHintLeft, shortcutHintWindowTop, timeInMilliseconds, NamedColor.Popup, FontStyle.Normal, 127);
+                }
                 
                 int suggestionSelectionRight;
                 DrawPopUpScrollBar(
@@ -1811,15 +1823,16 @@ public final class Screen
         const int popupTop, 
         const int popupRight, 
         const int popupBottom, 
-        const ubyte opacity = 255)
+        const ubyte borderOpacity = 255,
+        const ubyte backgroundOpacity = 255)
     {
-        SetDrawColor(AdjustOpacity(popupBackground.color, opacity));
+        SetDrawColor(AdjustOpacity(popupBackground.color, backgroundOpacity));
         FillRectangle(popupLeft, popupTop, popupRight, popupBottom);
         
-        SetDrawColor(AdjustOpacity(popupBorder.color, opacity));
+        SetDrawColor(AdjustOpacity(popupBorder.color, borderOpacity));
         DrawRectangle(popupLeft - 1, popupTop - 1, popupRight, popupBottom);
         
-        SetDrawColor(popupDropShadow.color);
+        SetDrawColor(AdjustOpacity(popupDropShadow.color, borderOpacity));
         FillRectangle(popupRight + 1, popupTop    + 2, popupRight + 4, popupBottom + 4);
         FillRectangle(popupLeft  + 2, popupBottom + 1, popupRight + 1, popupBottom + 4);
     }
@@ -1875,7 +1888,7 @@ public final class Screen
                 if (radius >= maxRadius)
                     value = 0.0;
                 else
-                    value = (1.0 - radius / maxRadius);
+                    value = 1.0 - radius / maxRadius;
                     
                 sum += value;
                 matrix[matrixY][matrixX] = value;
@@ -2170,8 +2183,8 @@ public final class Screen
                             
                             static foreach (matrixY; 0 .. matrixSize)
                             {
-                                matrixRowLeft  = cast(float4)matrix[matrixY][0 .. 4];
-                                matrixRowRight = cast(float4)matrix[matrixY][4 .. 8];
+                                matrixRowLeft  = cast(float4)(matrix[matrixY][0 .. 4]);
+                                matrixRowRight = cast(float4)(matrix[matrixY][4 .. 8]);
                         
                                 rowLeft  = loadUnaligned(cast(float4*)framedPixels[framedPixelsIndex     .. $].ptr);
                                 rowRight = loadUnaligned(cast(float4*)framedPixels[framedPixelsIndex + 4 .. $].ptr);

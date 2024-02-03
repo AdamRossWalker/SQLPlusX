@@ -233,59 +233,95 @@ public abstract final class Program
                 break;
                 
             case Action.MoveCursorUp:
-                if (!Program.Screen.queuedCommands.moveVerticallyBy(-1) && 
-                    !Program.Screen.rollover.moveVerticallyBy(-1))
+                if (Program.Screen.queuedCommands.moveVerticallyBy(-1))
+                    break;
+                
+                if (Program.Screen.rollover.moveVerticallyBy(-1))
+                    break;
+                
+                if (!Program.Screen.isEditorVisible)
                 {
-                    if (Program.Screen.isEditorVisible)
-                    {
-                        Program.Editor.MoveCursorUp;
-                        Program.Buffer.ScrollScreenToBottom;
-                    }
-                    else
-                        Program.Buffer.ScrollScreenVerticallyBy(-1);
+                    Program.Buffer.ScrollScreenVerticallyBy(-1);
+                    break;
                 }
+                
+                if (Program.Editor.isMultiLine)
+                {
+                    Program.Editor.MoveCursorUp;
+                    Program.Buffer.ScrollScreenToBottom;
+                    break;
+                }
+                
+                if (Program.AutoCompleteDatabase.SuggestionPopupVisible)
+                {
+                    Program.AutoCompleteDatabase.MoveSuggestionUp;
+                    break;
+                }
+                
+                Program.Editor.PreviousCommandInHistory;
                 break;
                 
             case Action.MoveCursorDown:
-                if (!Program.Screen.queuedCommands.moveVerticallyBy(1) && 
-                    !Program.Screen.rollover.moveVerticallyBy(1))
+                if (Program.Screen.queuedCommands.moveVerticallyBy(1))
+                    break;
+                
+                if (Program.Screen.rollover.moveVerticallyBy(1))
+                    break;
+                
+                if (!Program.Screen.isEditorVisible)
                 {
-                    if (Program.Screen.isEditorVisible)
-                    {
-                        Program.Editor.MoveCursorDown;
-                        Program.Buffer.ScrollScreenToBottom;
-                    }
-                    else
-                        Program.Buffer.ScrollScreenVerticallyBy(1);
+                    Program.Buffer.ScrollScreenVerticallyBy(1);
+                    break;
                 }
+                
+                if (Program.Editor.isMultiLine)
+                {
+                    Program.Editor.MoveCursorDown;
+                    Program.Buffer.ScrollScreenToBottom;
+                    break;
+                }
+                
+                if (Program.AutoCompleteDatabase.SuggestionPopupVisible)
+                {
+                    Program.AutoCompleteDatabase.MoveSuggestionDown;
+                    break;
+                }
+                
+                Program.Editor.NextCommandInHistory;
                 break;
                 
             case Action.MoveCursorLeft:
-                if (!Program.Screen.queuedCommands.moveHorizontallyBy(-1) && 
-                    !Program.Screen.rollover.moveHorizontallyBy(-1))
+                if (Program.Screen.queuedCommands.moveHorizontallyBy(-1))
+                    break;
+                    
+                if (Program.Screen.rollover.moveHorizontallyBy(-1))
+                    break;
+                    
+                if (!Program.Screen.isEditorVisible)
                 {
-                    if (Program.Screen.isEditorVisible)
-                    {
-                        Program.Editor.MoveCursorLeft;
-                        Program.Buffer.ScrollScreenToBottom;
-                    }
-                    else
-                        Program.Buffer.ScrollScreenHorizontallyBy(-1);
+                    Program.Buffer.ScrollScreenHorizontallyBy(-1);
+                    break;
                 }
+                
+                Program.Editor.MoveCursorLeft;
+                Program.Buffer.ScrollScreenToBottom;
                 break;
                 
             case Action.MoveCursorRight:
-                if (!Program.Screen.queuedCommands.moveHorizontallyBy(1) && 
-                    !Program.Screen.rollover.moveHorizontallyBy(1))
+                if (Program.Screen.queuedCommands.moveHorizontallyBy(1))
+                    break;
+                    
+                if (Program.Screen.rollover.moveHorizontallyBy(1))
+                    break;
+                    
+                if (!Program.Screen.isEditorVisible)
                 {
-                    if (Program.Screen.isEditorVisible)
-                    {
-                        Program.Editor.MoveCursorRight;
-                        Program.Buffer.ScrollScreenToBottom;
-                    }
-                    else
-                        Program.Buffer.ScrollScreenHorizontallyBy(1);
+                    Program.Buffer.ScrollScreenHorizontallyBy(1);
+                    break;
                 }
+                
+                Program.Editor.MoveCursorRight;
+                Program.Buffer.ScrollScreenToBottom;
                 break;
                 
             case Action.MoveToTop:
@@ -773,6 +809,8 @@ public abstract final class Program
                                     event.window.event == SDL_WINDOWEVENT_RESTORED)
                                     Program.Screen.InvalidateWindowSizes;
                                 
+                                // This fires all the time, when partially obscured, moved, all sorts.
+                                // But I remove the IsRendererValid check, I still see texture corruption sometimes.
                                 if (event.window.event == SDL_WINDOWEVENT_EXPOSED && !Program.Screen.IsRendererValid)
                                     Program.Screen.CreateRenderer;
                                 
