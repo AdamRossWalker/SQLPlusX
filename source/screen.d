@@ -27,7 +27,7 @@ int SDLFilterEventHandler(void* userdata, SDL_Event* event) nothrow
 {
     if (event.type == SDL_RENDER_DEVICE_RESET)
     {
-        DebugLog("SDL_RENDER_DEVICE_RESET");
+        debug DebugLog("SDL_RENDER_DEVICE_RESET");
         auto screen = cast(Screen)userdata;
         screen.InvalidateImages;
         return 0;
@@ -35,7 +35,7 @@ int SDLFilterEventHandler(void* userdata, SDL_Event* event) nothrow
     
     if (event.type == SDL_WINDOWEVENT)
     {    
-        // DebugLog("event.window.event PREVIEW", event.window.event);
+        debug DebugLog("event.window.event PREVIEW", event.window.event);
         
         if (event.window.event == SDL_WINDOWEVENT_MINIMIZED)
         {
@@ -57,7 +57,7 @@ int SDLFilterEventHandler(void* userdata, SDL_Event* event) nothrow
             //     default:                        eventName = "UNKNOWN WINDOWEVENT";        break;
             // }
             // 
-            // DebugLog(eventName);
+            // debug DebugLog(eventName);
             
             // The message pump runs something that handles the screen 
             // re-size and this blocks the main thread while the mouse 
@@ -559,13 +559,13 @@ public final class Screen
     
     private void CreateRenderer()
     {
-        DebugLog("Creating renderer.");
+        debug DebugLog("Creating renderer.");
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
         if (renderer is null)
             ThrowSDLError;
         
         CheckSDLError();
-        DebugLog("Renderer Created.");
+        debug DebugLog("Renderer Created.");
         
         SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
@@ -574,7 +574,7 @@ public final class Screen
     
     private void CreateCursors()
     {
-        DebugLog("Creating cursors.");
+        debug DebugLog("Creating cursors.");
         
         defaultMouseCursor = SDL_GetDefaultCursor();
         if (defaultMouseCursor is null)
@@ -593,7 +593,7 @@ public final class Screen
     
     public void RefreshImages()
     {
-        DebugLog("RefreshImages Started.");
+        debug DebugLog("RefreshImages Started.");
         if (IsImagesValid)
             return;
         
@@ -601,7 +601,7 @@ public final class Screen
         
         CreateScollBarMapImage;
         
-        DebugLog("Generating background textures.");
+        debug DebugLog("Generating background textures.");
         
         static foreach (texture; EnumMembers!BackgroundTexture) 
             static if (texture != BackgroundTexture.None)
@@ -613,7 +613,7 @@ public final class Screen
             
             sizingGripImages[size] = Image.Load!("SizingGrip" ~ sizeNumberText ~ ".bmp")(renderer);
             
-            DebugLog("Generating arrow textures.");
+            debug DebugLog("Generating arrow textures.");
             static foreach (direction; EnumMembers!ArrowDirection)
             {
                 arrowButtonStates[direction] = ButtonState.Normal;
@@ -625,10 +625,10 @@ public final class Screen
                 closeButtonImages[size][state] = Image.Load!("Close" ~ state.to!string ~ sizeNumberText ~ ".bmp")(renderer);
         }}
         
-        DebugLog("Clearing font textures.");
+        debug DebugLog("Clearing font textures.");
         characterGlyphs.reset;
         
-        DebugLog("Generating logo block textures.");
+        debug DebugLog("Generating logo block textures.");
         static foreach (type; EnumMembers!(logo.BlockType))
             blockImages[type] = Image.Load!(type.to!string ~ ".bmp")(renderer);        
         

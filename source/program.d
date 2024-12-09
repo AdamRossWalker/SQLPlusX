@@ -802,7 +802,7 @@ public abstract final class Program
                                 break MainLoop;
                             
                             case SDL_WINDOWEVENT:
-                                DebugLog("event.window.event CURRENT", event.window.event);
+                                debug DebugLog("event.window.event CURRENT", event.window.event);
                                 
                                 if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED || event.window.event == SDL_WINDOWEVENT_ENTER)
                                     Program.Screen.Invalidate;
