@@ -802,17 +802,14 @@ public abstract final class Program
                                 break MainLoop;
                             
                             case SDL_WINDOWEVENT:
+                                DebugLog("event.window.event CURRENT", event.window.event);
+                                
                                 if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED || event.window.event == SDL_WINDOWEVENT_ENTER)
                                     Program.Screen.Invalidate;
                                 
                                 if (event.window.event == SDL_WINDOWEVENT_MAXIMIZED || 
                                     event.window.event == SDL_WINDOWEVENT_RESTORED)
                                     Program.Screen.InvalidateWindowSizes;
-                                
-                                // This fires all the time, when partially obscured, moved, all sorts.
-                                // But I remove the IsRendererValid check, I still see texture corruption sometimes.
-                                if (event.window.event == SDL_WINDOWEVENT_EXPOSED && !Program.Screen.IsRendererValid)
-                                    Program.Screen.CreateRenderer;
                                 
                                 break;
                                 

@@ -3,7 +3,7 @@ module common; @safe
 import std.algorithm : max, min, any;
 import std.conv : to, toChars, LetterCase;
 import std.datetime : Duration;
-import std.file : write, append;
+import std.stdio : File;
 import std.range : padLeft, padRight, walkLength;
 import std.traits : Unqual;
 import std.typecons : Tuple, Flag, Yes, No;
@@ -13,7 +13,7 @@ import utf8_slice;
 
 public enum FormattingMode { Apply, Hidden, Disabled }
 public enum FontStyle { Normal, Bold }
-public enum NamedColor { Normal, Identifier, QuotedIdentifier, Disabled, Popup, HeaderUnderline, Comment, Function, Package, String, Keyword, Good, Warning, Error, Alert, Danger }
+public enum NamedColor { Normal, Identifier, QuotedIdentifier, Disabled, Popup, HeaderUnderline, Comment, Function, Package, DatabaseLink, String, Keyword, Good, Warning, Error, Alert, Danger }
 public enum SearchDirection { Forward, Backward }
 
 public alias StringReference = const(char)[];
@@ -169,6 +169,8 @@ public int intLength(T)(const scope T[] array) pure nothrow @safe @nogc
 enum debugLogFileName = "DebugLog.txt";
 enum debugLogType { Append, Reset }
 
+private File debugLogFile;
+
 public void DebugLog(string file = __FILE__, int line = __LINE__, T)(lazy string text, T value) nothrow =>
     DebugLog!(debugLogType.Append, file, line)(text ~ " = \"" ~ value.to!string ~ "\"");
 
@@ -183,12 +185,13 @@ public void DebugLog(debugLogType type = debugLogType.Append, string file = __FI
             file.padRight(' ', 32).to!string ~ 
             line.to!string.padLeft(' ', 8).to!string ~ " " ~ 
             thisTid.to!string.padRight(' ', 16).to!string ~ 
-            text ~ lineEnding;
+            text;
         
-        static if (type == debugLogType.Append)
-            append(debugLogFileName, output);
-        else
-            write(debugLogFileName, output);
+        if (type == debugLogType.Reset || !debugLogFile.isOpen)
+            debugLogFile = File(debugLogFileName, "w");
+        
+        debugLogFile.writeln(output);
+        debugLogFile.flush;
     }
     catch(Throwable) { }
 }

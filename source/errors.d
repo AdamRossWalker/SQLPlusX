@@ -22,6 +22,14 @@ void CheckSDLError(int returnCode, string context = null, string file = __FILE__
     ThrowSDLError(context, returnCode, file, line);
 }
 
+void CheckSDLError(bool isSuccess, string context = null, string file = __FILE__, size_t line = __LINE__) @safe 
+{
+    if (isSuccess)
+        return;
+    
+    ThrowSDLError(context, 0, file, line);
+}
+
 void ThrowSDLError(string context = null, int returnCode = 0, string file = __FILE__, size_t line = __LINE__) @trusted
 {
     throw new SDLException(

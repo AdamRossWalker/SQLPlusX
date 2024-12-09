@@ -50,7 +50,7 @@ private final class ImageSource(string filename) : Image
         
         width = surface.clip_rect.w;
         height = surface.clip_rect.h;
-        surface.SDL_SetColorKey(SDL_FALSE, 0);
+        CheckSDLError(surface.SDL_SetColorKey(SDL_FALSE, 0), filename);
         
         texture = SDL_CreateTextureFromSurface(renderer, surface);
         
@@ -75,9 +75,9 @@ private final class ImageSource(string filename) : Image
                                     (width * scale).to!int, 
                                     (height * scale).to!int); 
         
-        CheckSDLError(SDL_SetTextureAlphaMod(texture, opacity));
-        CheckSDLError(SDL_SetTextureColorMod(texture, r, g, b));
-        CheckSDLError(SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND));
-        CheckSDLError(SDL_RenderCopy(renderer, texture, null, &destination));
+        CheckSDLError(SDL_SetTextureAlphaMod(texture, opacity), filename);
+        CheckSDLError(SDL_SetTextureColorMod(texture, r, g, b), filename);
+        CheckSDLError(SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND), filename);
+        CheckSDLError(SDL_RenderCopy(renderer, texture, null, &destination), filename);
     }
 }

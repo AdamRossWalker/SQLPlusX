@@ -1099,14 +1099,6 @@ public abstract final class Commands
         Program.Buffer.StartSpooling(filename);
     }                                                          
     
-    @CommandName("RESET RENDERER")
-    @CommandUsage("RESET RENDERER")
-    @CommandSummary("Resets the renderer.  This exists for debugging purposes.")
-    public static void ResetRenderer(string remainingCommand)
-    {
-        Program.Screen.CreateRenderer;
-    }
-    
     @CommandName("OPEN")
     @CommandUsage("OPEN path")
     @CommandSummary("Adds a directory path to the current paths list.")

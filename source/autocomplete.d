@@ -86,6 +86,7 @@ public final class AutoCompleteManager
     private CommandWords baseCommandWords;
     public LinearLookup tableSchemasAndSimpleNames = new LinearLookup;
     private LinearLookup sequenceSchemasAndSimpleNames = new LinearLookup;
+    public LinearLookup databaseLinks = new LinearLookup;
     private LinearLookup[string] schemasToTableNames;
     private LinearLookup[string] schemasToSequenceNames;
     private Table[string] tablesLookup;
@@ -325,6 +326,7 @@ public final class AutoCompleteManager
          
         tableSchemasAndSimpleNames.Clear;
         sequenceSchemasAndSimpleNames.Clear;
+        databaseLinks.Clear;
         IdentifierLookup = null;
         tablesLookup = null;
         schemasToTableNames = null;
@@ -423,8 +425,16 @@ public final class AutoCompleteManager
             "       NULL                                                                                \n" ~ 
             "  FROM dual                                                                                \n" ~ 
             "UNION ALL                                                                                  \n" ~ 
-            "SELECT 'COLUMN'                AS object_type,                                             \n" ~ 
+            "SELECT 'DB_LINK'               AS object_type,                                             \n" ~ 
             "       2                       AS object_type_order,                                       \n" ~ 
+            "       owner,                                                                              \n" ~ 
+            "       db_link,                                                                            \n" ~ 
+            "       NULL,                                                                               \n" ~ 
+            "       NULL                                                                                \n" ~ 
+            "  FROM all_db_links                                                                        \n" ~ 
+            "UNION ALL                                                                                  \n" ~ 
+            "SELECT 'COLUMN'                AS object_type,                                             \n" ~ 
+            "       3                       AS object_type_order,                                       \n" ~ 
             "       owner,                                                                              \n" ~ 
             "       table_name,                                                                         \n" ~ 
             "       column_name,                                                                        \n" ~ 
@@ -442,7 +452,7 @@ public final class AutoCompleteManager
             "  FROM all_tab_columns                                                                     \n" ~ 
             "UNION ALL                                                                                  \n" ~ 
             "SELECT 'SYNONYM'               AS object_type,                                             \n" ~ 
-            "       3                       AS object_type_order,                                       \n" ~ 
+            "       4                       AS object_type_order,                                       \n" ~ 
             "       table_owner,                                                                        \n" ~ 
             "       table_name,                                                                         \n" ~ 
             "       NULLIF(owner, 'PUBLIC') AS synonym_owner,                                           \n" ~ 
@@ -451,7 +461,7 @@ public final class AutoCompleteManager
             "  FROM all_synonyms                                                                        \n" ~ 
             "UNION ALL                                                                                  \n" ~ 
             "SELECT 'SEQUENCE'              AS object_type,                                             \n" ~ 
-            "       4                       AS object_type_order,                                       \n" ~ 
+            "       5                       AS object_type_order,                                       \n" ~ 
             "       sequence_owner          AS sequence_owner,                                          \n" ~ 
             "       sequence_name,                                                                      \n" ~ 
             "       NULL,                                                                               \n" ~ 
@@ -459,7 +469,7 @@ public final class AutoCompleteManager
             "  FROM all_sequences                                                                       \n" ~ 
             "UNION ALL                                                                                  \n" ~ 
             "SELECT 'PROCEDURE'             AS object_type,                                             \n" ~ 
-            "       5                       AS object_type_order,                                       \n" ~ 
+            "       6                       AS object_type_order,                                       \n" ~ 
             "       NULLIF(owner, 'PUBLIC') AS procedure_owner,                                         \n" ~ 
             "       object_name,                                                                        \n" ~ 
             "       procedure_name,                                                                     \n" ~ 
@@ -467,7 +477,7 @@ public final class AutoCompleteManager
             "  FROM all_procedures                                                                      \n" ~ 
             "UNION ALL                                                                                  \n" ~ 
             "SELECT 'VIEW'                 AS object_type,                                              \n" ~ 
-            "       6                      AS object_type_order,                                        \n" ~ 
+            "       7                      AS object_type_order,                                        \n" ~ 
             "       owner,                                                                              \n" ~ 
             "       view_name,                                                                          \n" ~ 
             "       NULL,                                                                               \n" ~ 
@@ -499,6 +509,13 @@ public final class AutoCompleteManager
         {
             case "CURRENT_SCHEMA":
                 CurrentSchema = AddQuotesIfNecessary(record.getString(2));
+                break;
+                
+            case "DB_LINK":
+                AddDbLink(
+                    AddQuotesIfNecessary(record.getString(2)),
+                    AddQuotesIfNecessary(record.getString(3))
+                    );
                 break;
                 
             case "COLUMN":
@@ -589,6 +606,13 @@ public final class AutoCompleteManager
     void AddView(string schema, string name)
     {
         AddDottedMembersToCommand("SOURCE", schema, name);
+    }
+    
+    void AddDbLink(string schema, string name)
+    {
+        IdentifierLookup[name] = NamedColor.DatabaseLink;
+    
+        databaseLinks.Add(name);
     }
     
     void AddSynonym(string tableSchema, string tableName, string synonymSchema, string synonymName)
@@ -859,6 +883,15 @@ public final class AutoCompleteManager
             wordStart--;
         
         auto currentWord = commandUtf32[wordStart .. cursorOffset];
+        
+        // Are we looking for a DBLink?
+        if (wordStart > 0 && commandUtf32[wordStart - 1] == '@')
+        {
+            if (currentWord.length == 0)
+                return databaseLinks.Items;
+            else
+                return databaseLinks.LookupPartialText(currentWord.toUpper.to!string).array.sort.uniq.array;
+        }
         
         if (currentWord.length == 0)
         {

@@ -27,18 +27,19 @@ int SDLFilterEventHandler(void* userdata, SDL_Event* event) nothrow
 {
     if (event.type == SDL_RENDER_DEVICE_RESET)
     {
-        //DebugLog("SDL_RENDER_DEVICE_RESET");
+        DebugLog("SDL_RENDER_DEVICE_RESET");
         auto screen = cast(Screen)userdata;
-        screen.InvalidateRenderer;
+        screen.InvalidateImages;
         return 0;
     }
     
     if (event.type == SDL_WINDOWEVENT)
     {    
+        // DebugLog("event.window.event PREVIEW", event.window.event);
+        
         if (event.window.event == SDL_WINDOWEVENT_MINIMIZED)
         {
             auto screen = cast(Screen)userdata;
-            screen.InvalidateRenderer;
             return 0;
         }
         
@@ -223,6 +224,8 @@ public final class Screen
         functionTextOutline,
         packageText,
         packageTextOutline,
+        databaseLinkText,
+        databaseLinkTextOutline,
         stringText,
         stringTextOutline,
         keywordText,
@@ -542,59 +545,36 @@ public final class Screen
         }
         
         CreateRenderer;
-        
+        CreateCursors;
         ResetStars;
         SetTheme(InterfaceTheme.SqlPlus);
     }
     
-    public bool IsCreatingRenderer = false;
-    public bool IsRendererValid = false;
+    public bool IsImagesValid = false;
     
-    public void InvalidateRenderer() @nogc nothrow
+    public void InvalidateImages() @nogc nothrow
     {
-        IsRendererValid = false;
+        IsImagesValid = false;
     }
     
-    public void CreateRenderer()
+    private void CreateRenderer()
     {
-        if (IsCreatingRenderer)
-            return;
-    
-        IsCreatingRenderer = true;
-        scope (exit) 
-        {
-            IsCreatingRenderer = false;
-            IsRendererValid = true;
-        }
-    
-        //DebugLog("Disposing renderer.");
-        renderer.SDL_DestroyRenderer;
-        
-        Invalidate;
-        InvalidateFont;
-        
-        //DebugLog("Creating renderer.");
+        DebugLog("Creating renderer.");
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
         if (renderer is null)
             ThrowSDLError;
         
-        //DebugLog("Renderer Created.");
-        // When I tried this I get a GL context error.  I don't want to investigate creating a GL 
-        // context right now.
-        // 
-        // static const SWAP_INTERVAL_IMMEDITATE = 0;
-        // static const SWAP_INTERVAL_VSYNC = 1;
-        // static const SWAP_INTERVAL_ADAPTIVE_VSYNC = -1;
-        // 
-        // if (SDL_GL_SetSwapInterval(SWAP_INTERVAL_ADAPTIVE_VSYNC) != 0)
-        //     SDL_GL_SetSwapInterval(SWAP_INTERVAL_VSYNC);
-        
+        CheckSDLError();
+        DebugLog("Renderer Created.");
         
         SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
         renderer.SDL_RenderSetIntegerScale(SDL_bool.SDL_TRUE);
-        
-        //DebugLog("Creating cursors.");
+    }
+    
+    private void CreateCursors()
+    {
+        DebugLog("Creating cursors.");
         
         defaultMouseCursor = SDL_GetDefaultCursor();
         if (defaultMouseCursor is null)
@@ -609,10 +589,19 @@ public final class Screen
         gripSizingMouseCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
         if (gripSizingMouseCursor is null)
             ThrowSDLError;
+    }
+    
+    public void RefreshImages()
+    {
+        DebugLog("RefreshImages Started.");
+        if (IsImagesValid)
+            return;
+        
+        IsImagesValid = true;
         
         CreateScollBarMapImage;
         
-        //DebugLog("Generating background textures.");
+        DebugLog("Generating background textures.");
         
         static foreach (texture; EnumMembers!BackgroundTexture) 
             static if (texture != BackgroundTexture.None)
@@ -624,7 +613,7 @@ public final class Screen
             
             sizingGripImages[size] = Image.Load!("SizingGrip" ~ sizeNumberText ~ ".bmp")(renderer);
             
-            //DebugLog("Generating arrow textures.");
+            DebugLog("Generating arrow textures.");
             static foreach (direction; EnumMembers!ArrowDirection)
             {
                 arrowButtonStates[direction] = ButtonState.Normal;
@@ -636,10 +625,10 @@ public final class Screen
                 closeButtonImages[size][state] = Image.Load!("Close" ~ state.to!string ~ sizeNumberText ~ ".bmp")(renderer);
         }}
         
-        //DebugLog("Clearing font textures.");
+        DebugLog("Clearing font textures.");
         characterGlyphs.reset;
         
-        //DebugLog("Generating logo block textures.");
+        DebugLog("Generating logo block textures.");
         static foreach (type; EnumMembers!(logo.BlockType))
             blockImages[type] = Image.Load!(type.to!string ~ ".bmp")(renderer);        
         
@@ -718,6 +707,9 @@ public final class Screen
         verticalScrollbarMapImage = renderer.SDL_CreateTexture(nativePixelFormat, SDL_TEXTUREACCESS_STREAMING, verticalScrollbarMapImageSize.w, verticalScrollbarMapImageSize.h);
         if (verticalScrollbarMapImage is null)
             ThrowSDLError;
+        
+        verticalScrollbarMapImage.SDL_SetTextureAlphaMod(127);
+        verticalScrollbarMapImage.SDL_SetTextureBlendMode(SDL_BLENDMODE_BLEND);
     }
     
     public void RefreshWindowSizes(WindowDimensions dimensions)()
@@ -791,21 +783,14 @@ public final class Screen
         gripButtonRight  = windowWidth;
         gripButtonBottom = windowHeight;
         
-        CreateScollBarMapImage;
-        
-        // I have no fucking clue why SDL_CreateTexture gives me "Invalid texture" here after restoring a minimized window.
-        // The dimensions look fine and the renderer exists.  If I clear the error, everything seems to work so far.
-        SDL_ClearError();
-        
-        verticalScrollbarMapImage.SDL_SetTextureAlphaMod(127);
-        verticalScrollbarMapImage.SDL_SetTextureBlendMode(SDL_BLENDMODE_BLEND);
+        InvalidateImages;
         
         buffer.BalanceExtraColumnSpace;
     }
     
     public void Update(const int timeInMilliseconds, const int lastFrameDurationInMilliseconds)
     {
-        if (isScreenUpToDate || !IsRendererValid || IsCreatingRenderer)
+        if (isScreenUpToDate)
             return;
         
         isScreenUpToDate = true;
@@ -819,6 +804,8 @@ public final class Screen
                 RefreshWindowSizes!(WindowDimensions.Refresh);
                 windowSizesValid = true;
             }
+            
+            RefreshImages;
             
             SetDrawColor(background.color);
             renderer.SDL_RenderClear.CheckSDLError;
@@ -1682,12 +1669,13 @@ public final class Screen
         }
         catch (SDLException exception) 
         {
-            DebugLog("Exception " ~ exception.InnerMessage);
-            InvalidateRenderer;
+            DebugLog("Exception " ~ exception.InnerMessage ~ exception.msg);
+            DebugLog(exception.msg);
+            InvalidateImages;
             if (exception.InnerMessage != "Present(): DEVICELOST" &&
-                exception.InnerMessage != "BeginScene(): INVALIDCALL" &&
-                exception.InnerMessage != "Reset(): INVALIDCALL" &&
-                exception.InnerMessage != "Invalid renderer" &&
+                // exception.InnerMessage != "BeginScene(): INVALIDCALL" &&
+                // exception.InnerMessage != "Reset(): INVALIDCALL" &&
+                // exception.InnerMessage != "Invalid renderer" &&
                 exception.InnerMessage != "Invalid texture")
                 throw exception;
         }
@@ -2183,8 +2171,8 @@ public final class Screen
                             
                             static foreach (matrixY; 0 .. matrixSize)
                             {
-                                matrixRowLeft  = cast(float4)(matrix[matrixY][0 .. 4]);
-                                matrixRowRight = cast(float4)(matrix[matrixY][4 .. 8]);
+                                matrixRowLeft  = loadUnaligned(cast(float4*)matrix[matrixY][0 .. 4].ptr);
+                                matrixRowRight = loadUnaligned(cast(float4*)matrix[matrixY][4 .. 8].ptr);
                         
                                 rowLeft  = loadUnaligned(cast(float4*)framedPixels[framedPixelsIndex     .. $].ptr);
                                 rowRight = loadUnaligned(cast(float4*)framedPixels[framedPixelsIndex + 4 .. $].ptr);
@@ -2945,6 +2933,7 @@ public final class Screen
                 case Comment:          return commentTextOutline.color;
                 case Function:         return functionTextOutline.color;
                 case Package:          return packageTextOutline.color;
+                case DatabaseLink:     return databaseLinkTextOutline.color;
                 case String:           return stringTextOutline.color;
                 case Keyword:          return keywordTextOutline.color;
                 case Good:             return goodTextOutline.color;
@@ -2964,6 +2953,7 @@ public final class Screen
                 case Comment:          return commentText.color;
                 case Function:         return functionText.color;
                 case Package:          return packageText.color;
+                case DatabaseLink:     return databaseLinkText.color;
                 case String:           return stringText.color;
                 case Keyword:          return keywordText.color;
                 case Good:             return goodText.color;
@@ -3011,6 +3001,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 127,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(  0,   0, 127, 255);
+                databaseLinkText.color            = SDL_Color(127,   0, 127, 255);
                 stringText.color                  = SDL_Color( 63, 127, 127, 255);
                 keywordText.color                 = SDL_Color(  0, 127, 255, 255);
                 goodText.color                    = SDL_Color(  0, 196,   0, 255);
@@ -3033,6 +3024,7 @@ public final class Screen
                 commentTextOutline.color          = white;
                 functionTextOutline.color         = white;
                 packageTextOutline.color          = white;
+                databaseLinkTextOutline.color     = white;
                 stringTextOutline.color           = white;
                 keywordTextOutline.color          = white;
                 goodTextOutline.color             = white;
@@ -3052,6 +3044,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 127,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(  0,   0, 127, 255);
+                databaseLinkText.color            = SDL_Color(127,   0, 127, 255);
                 stringText.color                  = SDL_Color( 63, 127, 127, 255);
                 keywordText.color                 = SDL_Color(  0, 127, 255, 255);
                 goodText.color                    = SDL_Color(  0, 255,   0, 255);
@@ -3074,6 +3067,7 @@ public final class Screen
                 commentTextOutline.color          = white;
                 functionTextOutline.color         = white;
                 packageTextOutline.color          = white;
+                databaseLinkTextOutline.color     = white;
                 stringTextOutline.color           = white;
                 keywordTextOutline.color          = white;
                 goodTextOutline.color             = black;
@@ -3094,6 +3088,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 127,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(196, 196, 255, 255);
+                databaseLinkText.color            = SDL_Color(225,   0, 225, 255);
                 stringText.color                  = SDL_Color( 63, 196, 196, 255);
                 keywordText.color                 = SDL_Color(  0, 127, 255, 255);
                 goodText.color                    = SDL_Color(  0, 196,   0, 255);
@@ -3116,6 +3111,7 @@ public final class Screen
                 commentTextOutline.color          = black;
                 functionTextOutline.color         = black;
                 packageTextOutline.color          = black;
+                databaseLinkTextOutline.color     = black;
                 stringTextOutline.color           = black;
                 keywordTextOutline.color          = black;
                 goodTextOutline.color             = black;
@@ -3136,6 +3132,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 196,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(196, 196, 255, 255);
+                databaseLinkText.color            = SDL_Color(255, 127, 255, 255);
                 stringText.color                  = SDL_Color( 63, 196, 196, 255);
                 keywordText.color                 = SDL_Color(  0, 196, 255, 255);
                 goodText.color                    = SDL_Color(  0, 196,   0, 255);
@@ -3158,6 +3155,7 @@ public final class Screen
                 commentTextOutline.color          = black;
                 functionTextOutline.color         = black;
                 packageTextOutline.color          = black;
+                databaseLinkTextOutline.color     = black;
                 stringTextOutline.color           = black;
                 keywordTextOutline.color          = black;
                 goodTextOutline.color             = black;
@@ -3184,6 +3182,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 127,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(196, 255, 196, 255);
+                databaseLinkText.color            = SDL_Color(255,   0, 255, 255);
                 stringText.color                  = SDL_Color( 96, 163, 163, 255);
                 keywordText.color                 = SDL_Color(  0, 127, 255, 255);
                 goodText.color                    = SDL_Color(  0, 255,   0, 255);
@@ -3206,6 +3205,7 @@ public final class Screen
                 commentTextOutline.color          = black;
                 functionTextOutline.color         = black;
                 packageTextOutline.color          = black;
+                databaseLinkTextOutline.color     = black;
                 stringTextOutline.color           = black;
                 keywordTextOutline.color          = black;
                 goodTextOutline.color             = SDL_Color(  0, 255,   0, 255);
@@ -3227,6 +3227,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 127,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(  0,   0, 127, 255);
+                databaseLinkText.color            = SDL_Color(225,   0, 225, 255);
                 stringText.color                  = SDL_Color( 63, 127, 127, 255);
                 keywordText.color                 = SDL_Color(  0, 127, 255, 255);
                 goodText.color                    = SDL_Color(  0, 255,   0, 255);
@@ -3249,6 +3250,7 @@ public final class Screen
                 commentTextOutline.color          = white;
                 functionTextOutline.color         = white;
                 packageTextOutline.color          = white;
+                databaseLinkTextOutline.color     = white;
                 stringTextOutline.color           = white;
                 keywordTextOutline.color          = white;
                 goodTextOutline.color             = black;
@@ -3269,6 +3271,7 @@ public final class Screen
                 commentText.color                 = SDL_Color( 63, 255,  63, 255);
                 functionText.color                = SDL_Color(196, 196, 127, 255);
                 packageText.color                 = SDL_Color(  0,   0, 127, 255);
+                databaseLinkText.color            = SDL_Color(255, 127, 255, 255);
                 stringText.color                  = SDL_Color(127, 255, 255, 255);
                 keywordText.color                 = SDL_Color( 63, 192, 255, 255);
                 goodText.color                    = SDL_Color(  0, 255,   0, 255);
@@ -3291,6 +3294,7 @@ public final class Screen
                 commentTextOutline.color          = black;
                 functionTextOutline.color         = black;
                 packageTextOutline.color          = white;
+                databaseLinkTextOutline.color     = black;
                 stringTextOutline.color           = black;
                 keywordTextOutline.color          = black;
                 goodTextOutline.color             = black;
@@ -3311,6 +3315,7 @@ public final class Screen
                 commentText.color                 = SDL_Color(  0, 163,   0, 255);
                 functionText.color                = SDL_Color(127, 127,  63, 255);
                 packageText.color                 = SDL_Color(196, 196, 255, 255);
+                databaseLinkText.color            = SDL_Color(255, 127, 255, 255);
                 stringText.color                  = SDL_Color( 96, 163, 163, 255);
                 keywordText.color                 = SDL_Color(  0, 127, 255, 255);
                 goodText.color                    = SDL_Color(  0, 196,   0, 255);
@@ -3333,6 +3338,7 @@ public final class Screen
                 commentTextOutline.color          = black;
                 functionTextOutline.color         = black;
                 packageTextOutline.color          = black;
+                databaseLinkTextOutline.color     = black;
                 stringTextOutline.color           = black;
                 keywordTextOutline.color          = black;
                 goodTextOutline.color             = black;
