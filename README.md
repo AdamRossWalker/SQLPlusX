@@ -46,7 +46,7 @@ while results are still being returned.  It can then make best use of
 the horizontal space available while still giving the plain-text
 selection and copy feel.
 
-The buffer is designed to be aritrarily wide, so you can do the obvious 
+The buffer is designed to be arbitrarily wide, so you can do the obvious 
 `SELECT * FROM wide_table;` and have readable results without needing 
 to configure client options accordingly.
 
@@ -58,7 +58,7 @@ turned into a date).  Ctrl-Alt-C copies a full field for easy access to
 a CLOB or a large VARCHAR2.
 
 Record history is retained based on the memory footprint, so narrow
-results can story more rows.  Large result sets are truncated first, so
+results can store more rows.  Large result sets are truncated first, so
 you don’t lose previous commands and results above just because the last 
 query returned 1m rows.
 

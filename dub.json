@@ -7,7 +7,7 @@
     "buildRequirements": ["allowWarnings"],
     "description": "SQLPlusX",
     "copyright": "Copyright © 2023, Adam Walker",
-    "license": "proprietary", 
+    "license": "MIT", 
     "dflags-dmd": ["-mixin=mixin_output.d"], 
     "dependencies": {
         "bindbc-sdl": "~>1.1.1", 
@@ -20,7 +20,6 @@
     ],      
     "libs": [
         "lib/SDL2",
-        "lib/SDL2main",
         "lib/SDL2_ttf",
         "user32",
         "version",
