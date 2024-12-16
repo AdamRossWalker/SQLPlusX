@@ -14,7 +14,7 @@ import std.algorithm : max, min, startsWith, canFind;
 import std.conv : to;
 import std.format : format;
 import std.functional : toDelegate;
-import std.string : splitLines, strip, toUpper, toLower;
+import std.string : split, strip, toUpper, toLower;
 import std.sumtype : match;
 import std.typecons : Flag, Yes, No, Tuple, Nullable;
 import std.utf : byDchar;
@@ -677,7 +677,7 @@ public abstract final class Program
             Buffer.AddText("\n\n\n\n\n\n");
             Buffer.ScrollScreenToBottom;
             
-            const(string)[] parameters = splitLines(commandLine);
+            auto parameters = split(commandLine);
             
             auto connectionString = "";
             auto commandLineScripts = new string[0];
