@@ -884,15 +884,6 @@ public final class AutoCompleteManager
         
         auto currentWord = commandUtf32[wordStart .. cursorOffset];
         
-        // Are we looking for a DBLink?
-        if (wordStart > 0 && commandUtf32[wordStart - 1] == '@')
-        {
-            if (currentWord.length == 0)
-                return databaseLinks.Items;
-            else
-                return databaseLinks.LookupPartialText(currentWord.toUpper.to!string).array.sort.uniq.array;
-        }
-        
         if (currentWord.length == 0)
         {
             auto isLineEmpty = true;
@@ -923,6 +914,15 @@ public final class AutoCompleteManager
         
         if (Status != States.Complete)
             return null;
+        
+        // Are we looking for a DBLink?
+        if (wordStart > 0 && commandUtf32[wordStart - 1] == '@')
+        {
+            if (currentWord.length == 0)
+                return databaseLinks.Items;
+            else
+                return databaseLinks.LookupPartialText(currentWord.toUpper.to!string).array.sort.uniq.array;
+        }
         
         const names = OracleNames.ParseName!(OracleNames.ParseQuotes.Keep)(currentWord.to!string);
         

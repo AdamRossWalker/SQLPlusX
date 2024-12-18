@@ -6,7 +6,7 @@ import std.conv : to;
 import std.math : abs, ceil, pow;
 import std.string : toStringz;
 import std.traits : EnumMembers;
-import std.typecons : Nullable, Flag, Yes, No;
+import std.typecons : Nullable, Flag, Yes, No, Tuple;
 import std.datetime : Duration, dur;
 import std.utf : byDchar;
 
@@ -492,6 +492,14 @@ public final class Screen
         if (initResult != 0)
             ThrowSDLError;
         
+        const fullScreenSize = GetFullScreenSize;
+        
+        windowLeft   = fullScreenSize.width / 4;
+        windowTop    = fullScreenSize.height / 4;
+        windowWidth  = fullScreenSize.width / 2;
+        windowHeight = fullScreenSize.height / 2; 
+        fontSize = fullScreenSize.width / 120;
+        
         window = SDL_CreateWindow("SQLPlusX", windowLeft, windowTop, windowWidth, windowHeight, SDL_WINDOW_ALLOW_HIGHDPI + SDL_WINDOW_RESIZABLE);
         if (window is null)
             ThrowSDLError;
@@ -676,6 +684,18 @@ public final class Screen
         
         SDL_SetWindowTitle(window, title.ToCString);
         CheckSDLError;
+    }
+    
+    public Tuple!(int, "width", int, "height") GetFullScreenSize() @trusted const @nogc
+    {
+        SDL_DisplayMode displayMode;
+        SDL_GetDesktopDisplayMode(0, &displayMode);
+        
+        // If this gets updated to SDL3, we need to compensate for the shitty lying API
+        // that doesn't give me the actual fucking value.
+        // const scale = SDL_GetDisplayContentScale(0);
+        
+        return typeof(return)(displayMode.w/* * scale*/, displayMode.h/* * scale*/);
     }
     
     private auto windowSizesValid = false;
