@@ -1,6 +1,15 @@
 
 # Change Log
 
+## V1.3.0
+
+20-Dec-2024
+Corrected SIMD code to work with newest DMD.
+Corrected debug logging which previously lost logs due to a race condition.
+Includes another attempt to re-work textures lost on Alt-Tab.  This was broken for a while but for some reason is much worse on Windows 11.  Recreating the renderer in the old version would stop all drawing.  I wasn't able to work out why, but I reworked it so the renderer does not get re-created at all.  I wasn't able to find any hits suggesting this was required.
+Added simple DB link auto complete.  It doesn't fetch tables from remote schemas or connect the typed table to the known list of DB links.  It just tells you what is there when you type `@`.
+Added simple resolution check to scale slightly better on high resolution displays without relying on a user script.  However, the API lies about the resolution reported when the monitor is scaled.  I can't fix now because it appears I need to update to SDL3 first in order to query the scaling FFS.
+
 ## V1.2.0
 
 03-Feb-2024
